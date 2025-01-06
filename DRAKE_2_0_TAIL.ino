@@ -219,7 +219,7 @@ void loop() {
   //rainbow(10); ///using a 10ms delay
 
   //Update Timer
-  t.update(); //for flash and aother async task
+  t.update();  //for flash and aother async task
   ///////////////?/
 
 

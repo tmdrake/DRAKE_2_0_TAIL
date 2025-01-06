@@ -1,5 +1,11 @@
-//#include <esp_task_wdt.h>
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
 
+void prepend(char* s, const char* t);
+
+//#include <esp_task_wdt.h>
+/*1-5-2025: Lots of this code was stolen from Shngy's suit project back in 2016 era*/
 // void soundloop() {
 //   /*Some example procedures showing how to display to the pixels:*/
 //   static int col = 0;
@@ -51,7 +57,7 @@
 //   cycleRgb(col);    // makes them blinky
 
 // }
-
+/*************************The actual code****************************/
 float cR = 0, cG = 0, cB = 0;  // Need to use descriptive varables....
 void soundloop(unsigned long millis, long refresh_ms, bool color) {
   /*sample and sound was done at <intervals in mS>*/ 
@@ -113,6 +119,16 @@ long sampleaudio() {
   char msg[16];
   ltoa(micLevel, msg, 10);
   udp.broadcastTo(msg, 1237); //Send Audio Data Over UDP-IP 
+  /*need to add a 'm' in front*/
+  prepend(msg, "m");
+  /*ASK may not support buffering while sending*/
+  Ask_TX.send((uint8_t *)msg, strlen(msg));
+  //Ask_TX.waitPacketSent(); //May not be neeed if we can check if ASK is busy.
+  //Serial.println(msg);
+  //Serial.println(strlen(msg)); //Massive debugging
+
+  
+  
 
 #ifdef DEBUG_MIC
   Serial.println("Mic:");
@@ -132,6 +148,16 @@ long sampleaudio() {
 }
 
 
+
+/* Prepends t into s. Assumes s has enough space allocated
+** for the combined string.
+*/
+void prepend(char* s, const char* t)
+{
+    size_t len = strlen(t);
+    memmove(s + len, s, strlen(s) + 1);
+    memcpy(s, t, len);
+}
 
 
 /*Cycle col based on the rotational values in COL*/
