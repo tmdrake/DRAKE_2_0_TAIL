@@ -316,6 +316,7 @@ void BTAuthCompleteCallback(boolean success) {
 
 void mode_selector(int mode) {
   //Selects different mode like sound, lights, etc.
+  //Todo: Select modes to run the lighting programs
 
   switch (mode) {
     case 0:
