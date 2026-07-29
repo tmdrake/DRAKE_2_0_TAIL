@@ -5,8 +5,6 @@
 void prepend(char* s, const char* t);
 
 float cR = 0, cG = 0, cB = 0;
-
-// Last value we actually transmitted (for change-threshold)
 static long lastSentMic = -9999;
 
 void soundloop(unsigned long millis, long refresh_ms, bool color) {
@@ -47,42 +45,30 @@ void soundloop(unsigned long millis, long refresh_ms, bool color) {
 }
 
 /*
- * Analog mic path (unchanged):
- *   raw = analogRead(MIC)          // ESP32 ADC
- *   level = raw - OFFSET + sensitivity
- *   OFFSET = 1600  (approx mid-rail / bias voltage of the mic preamp)
- *
- * Transport to Head: encrypted ESP-NOW (preferred)
- * Transport to paws: ASK ASCII "m####" (unchanged)
+ * Mic pipeline (shared with sound_detect gate via readMicLevel):
+ *   delta = max(0, analogRead(A0) - OFFSET)
+ *   level = delta * micGain/100 + sensitivity
+ *   EMA smooth
+ * Then ESP-NOW to Head + ASK "m####" to paws.
  */
 long sampleaudio() {
-  long micLevel = analogRead(MIC) - OFFSET + sensitivity;
-  if (micLevel < 0) micLevel = 0;
+  long micLevel = readMicLevel();
 
-  // ---- ESP-NOW mic stream to Head (low latency, encrypted) ----
   if (abs(micLevel - lastSentMic) >= 8 || micLevel == 0) {
     lastSentMic = micLevel;
     int16_t level16 = (int16_t)constrain(micLevel, 0, 32767);
     espnowSendMic(level16);
-
-    // Optional UDP fallback while bringing ESP-NOW online on the bench:
-    // uint8_t buf[2] = { (uint8_t)((level16 >> 8) & 0xFF), (uint8_t)(level16 & 0xFF) };
-    // udp.writeTo(buf, 2, IPAddress(192, 168, 4, 1), 1237);
   }
 
-  // ---- ASK to paws (ASCII "m####") ----
   char msg[16];
   ltoa(micLevel, msg, 10);
   prepend(msg, "m");
   Ask_TX.send((uint8_t *)msg, strlen(msg));
 
 #ifdef DEBUG_MIC
-  Serial.println("Mic:");
+  Serial.print("Mic:");
   Serial.println(micLevel);
 #endif
-  if (lastmiclevel < (unsigned long)micLevel) {
-    lastmiclevel = micLevel;
-  }
 
   return micLevel;
 }

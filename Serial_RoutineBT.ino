@@ -1,6 +1,5 @@
 /*
- * Serial_RoutineBT.ino  (NimBLE NUS)
- * Includes Head settings: fan mode/threshold, CDS eye-dim threshold/level
+ * Serial_RoutineBT.ino – NimBLE NUS + Head settings + mic G/A
  */
 
 #include <NimBLEDevice.h>
@@ -41,6 +40,10 @@ void pushLiveStatus() {
   s += animSpeed;
   s += " S:";
   s += sensitivity;
+  s += " G:";
+  s += micGate;
+  s += " A:";
+  s += micGain;
   s += " E:";
   s += enableSound ? 1 : 0;
   s += " Mic:";
@@ -61,7 +64,6 @@ void forwardCmd(const char *msg) {
   Ask_TX.waitPacketSent();
 }
 
-// Head-only settings (no ASK — paws don't use fan/CDS)
 void forwardHeadCmd(const char *msg) {
   espnowSendCmd(msg);
   udp.broadcastTo(msg, 1234);
@@ -76,37 +78,53 @@ void processBLECommand(const String& raw) {
 
   switch (inByte) {
     case 'e':
-      {
-        blePrintln("Disable Sound Detection.");
-        enableSound = false;
-        ENABLESOUND.put(0, enableSound);
-        ENABLESOUND.commit();
-        break;
-      }
+      enableSound = false;
+      ENABLESOUND.put(0, enableSound);
+      ENABLESOUND.commit();
+      blePrintln("Sound Detection OFF");
+      break;
     case 'E':
-      {
-        blePrintln("Enable Sound Detection.");
-        enableSound = true;
-        ENABLESOUND.put(0, enableSound);
-        ENABLESOUND.commit();
-        break;
-      }
+      enableSound = true;
+      ENABLESOUND.put(0, enableSound);
+      ENABLESOUND.commit();
+      blePrintln("Sound Detection ON");
+      break;
     case 'L':
-      {
-        blePrintln("Flash Lamp!");
-        flash_lamp();
-        forwardCmd("L0");
-        break;
-      }
+      blePrintln("Flash Lamp!");
+      flash_lamp();
+      forwardCmd("L0");
+      break;
     case 'S':
       {
         int temp = cmd.substring(1).toInt();
-        if (temp > -1500 && temp < 4000) {
+        if (temp >= -500 && temp <= 4000) {
           sensitivity = temp;
           SENSITIVITY.put(0, sensitivity);
           SENSITIVITY.commit();
         }
         blePrintln("Sensitivity=" + String(sensitivity));
+        break;
+      }
+    case 'G':
+      {
+        int temp = cmd.substring(1).toInt();
+        if (temp >= 10 && temp <= 2000) {
+          micGate = temp;
+          GATE.put(0, micGate);
+          GATE.commit();
+        }
+        blePrintln("Gate=" + String(micGate));
+        break;
+      }
+    case 'A':
+      {
+        int temp = cmd.substring(1).toInt();
+        if (temp >= 50 && temp <= 300) {
+          micGain = temp;
+          GAIN.put(0, micGain);
+          GAIN.commit();
+        }
+        blePrintln("Gain=" + String(micGain));
         break;
       }
     case 'B':
@@ -133,59 +151,38 @@ void processBLECommand(const String& raw) {
         break;
       }
     case 'F':
-      {
-        // F0=fan off  F1=fan on  F2=fan auto  |  FT85=threshold °F
-        String payload = cmd;
-        forwardHeadCmd(payload.c_str());
-        if (cmd.length() >= 2 && (cmd.charAt(1) == 'T' || cmd.charAt(1) == 't'))
-          blePrintln("Fan threshold forwarded: " + cmd);
-        else
-          blePrintln("Fan mode forwarded: " + cmd);
-        break;
-      }
+      forwardHeadCmd(cmd.c_str());
+      blePrintln("Fan cmd: " + cmd);
+      break;
     case 'I':
-      {
-        // I<n> CDS threshold 0-1023
-        forwardHeadCmd(cmd.c_str());
-        blePrintln("CDS threshold forwarded: " + cmd);
-        break;
-      }
+      forwardHeadCmd(cmd.c_str());
+      blePrintln("CDS threshold: " + cmd);
+      break;
     case 'D':
-      {
-        // D<n> eye dim percent when CDS active 1-100
-        forwardHeadCmd(cmd.c_str());
-        blePrintln("Eye dim % forwarded: " + cmd);
-        break;
-      }
+      forwardHeadCmd(cmd.c_str());
+      blePrintln("Eye dim: " + cmd);
+      break;
     case 'R':
-      {
-        blePrintln("Resync...");
-        sendbackgroundloopReset();
-        resetBrightnessandDirection();
-        forwardCmd("R0");
-        break;
-      }
+      blePrintln("Resync...");
+      sendbackgroundloopReset();
+      resetBrightnessandDirection();
+      forwardCmd("R0");
+      break;
     case 'Z':
-      {
-        blePrintln("REBOOTING...");
-        delay(500);
-        ESP.restart();
-        break;
-      }
+      blePrintln("REBOOTING...");
+      delay(500);
+      ESP.restart();
+      break;
     case 'M':
       {
         int temp = cmd.substring(1).toInt();
-        if (temp >= 0 && temp <= 10)
-          mode = temp;
+        if (temp >= 0 && temp <= 10) mode = temp;
 
         char msg[3] = {'M', '0', '\0'};
-        if (mode >= 0 && mode <= 9)
-          msg[1] = '0' + mode;
-        else if (mode == 10)
-          msg[1] = 'A';
+        if (mode >= 0 && mode <= 9) msg[1] = '0' + mode;
+        else if (mode == 10) msg[1] = 'A';
 
         forwardCmd(msg);
-
         blePrintln("Mode=" + String(mode));
         MODE.put(0, mode);
         MODE.commit();
@@ -196,20 +193,17 @@ void processBLECommand(const String& raw) {
       {
         String status;
         status += "**************************************\n";
-        status += "Commands:\n";
-        status += "M B V S E/e L R Z\n";
-        status += "F0/F1/F2 - Fan off/on/auto\n";
-        status += "FT<temp> - Fan threshold F\n";
-        status += "I<0-1023> - CDS eye-dim threshold\n";
-        status += "D<1-100> - Eye dim percent\n";
+        status += "M B V S G A E/e L R Z\n";
+        status += "S=sensitivity  G=gate  A=gain%\n";
+        status += "F0/F1/F2 FT I D (Head)\n";
         status += "**************************************\n";
-        status += "M:" + String(mode) + "  B:" + String(masterBrightness) +
-                  "  V:" + String(animSpeed) + "\n";
-        status += "S:" + String(sensitivity) + "  E:" + String(enableSound) + "\n";
+        status += "M:" + String(mode) + " B:" + String(masterBrightness) +
+                  " V:" + String(animSpeed) + "\n";
+        status += "S:" + String(sensitivity) + " G:" + String(micGate) +
+                  " A:" + String(micGain) + " E:" + String(enableSound) + "\n";
         status += "Mic:" + String(lastmiclevel) +
-                  "  HeadB:" + String(head_brightness) +
-                  "  HeadT:" + String(head_temperature) + "\n";
-        status += "ESP-NOW:" + String(espnowReady ? 1 : 0) + "\n";
+                  " HeadB:" + String(head_brightness) +
+                  " HeadT:" + String(head_temperature) + "\n";
         status += "**************************************\n";
         blePrint(status);
         break;
@@ -224,7 +218,7 @@ class ServerCallbacks : public NimBLEServerCallbacks {
   }
   void onDisconnect(NimBLEServer* pServer) {
     deviceConnected = false;
-    Serial.println("BLE client disconnected - restarting advertising");
+    Serial.println("BLE client disconnected");
     NimBLEDevice::startAdvertising();
   }
 };
@@ -232,46 +226,29 @@ class ServerCallbacks : public NimBLEServerCallbacks {
 class RxCallbacks : public NimBLECharacteristicCallbacks {
   void onWrite(NimBLECharacteristic* pCharacteristic) {
     std::string value = pCharacteristic->getValue();
-    if (value.length() > 0) {
+    if (value.length() > 0)
       processBLECommand(String(value.c_str()));
-    }
   }
 };
 
 void setupBLE() {
-  Serial.println("Starting NimBLE NUS...");
-
   NimBLEDevice::init("TMDrake_tail");
   NimBLEDevice::setPower(ESP_PWR_LVL_P9);
-
   pServer = NimBLEDevice::createServer();
   pServer->setCallbacks(new ServerCallbacks());
-
   NimBLEService* pService = pServer->createService(NUS_SERVICE_UUID);
-
-  NimBLECharacteristic* pRxCharacteristic = pService->createCharacteristic(
-      NUS_RX_UUID,
-      NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_NR
-  );
-  pRxCharacteristic->setCallbacks(new RxCallbacks());
-
+  NimBLECharacteristic* pRx = pService->createCharacteristic(
+      NUS_RX_UUID, NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_NR);
+  pRx->setCallbacks(new RxCallbacks());
   pTxCharacteristic = pService->createCharacteristic(
-      NUS_TX_UUID,
-      NIMBLE_PROPERTY::NOTIFY | NIMBLE_PROPERTY::READ
-  );
-
+      NUS_TX_UUID, NIMBLE_PROPERTY::NOTIFY | NIMBLE_PROPERTY::READ);
   pService->start();
-
-  NimBLEAdvertising* pAdvertising = NimBLEDevice::getAdvertising();
-  pAdvertising->setName("TMDrake_tail");
-  pAdvertising->addServiceUUID(NUS_SERVICE_UUID);
-  pAdvertising->enableScanResponse(true);
-  pAdvertising->setMinPreferred(0x06);
-  pAdvertising->setMaxPreferred(0x12);
-  pAdvertising->start();
-
+  NimBLEAdvertising* adv = NimBLEDevice::getAdvertising();
+  adv->setName("TMDrake_tail");
+  adv->addServiceUUID(NUS_SERVICE_UUID);
+  adv->enableScanResponse(true);
+  adv->start();
   Serial.println("NimBLE NUS advertising as TMDrake_tail");
 }
 
-void checkSerialBT() {
-}
+void checkSerialBT() {}
