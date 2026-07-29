@@ -2,8 +2,8 @@
  * Serial_RoutineBT.ino  (NimBLE NUS)
  * Remote command interface over Nordic UART Service
  *
- * Also pushes live status to the app:
- *   STAT M:.. B:.. V:.. S:.. E:.. Mic:.. HeadB:.. HeadT:..
+ * Commands that affect the Head are sent via encrypted ESP-NOW
+ * (and still UDP + ASK where useful).
  */
 
 #include <NimBLEDevice.h>
@@ -29,12 +29,11 @@ void blePrintln(const String& msg) {
   blePrint(msg + "\n");
 }
 
-// Lightweight live status for the app (single line, easy to parse)
 void pushLiveStatus() {
   if (!deviceConnected || !pTxCharacteristic) return;
 
   static unsigned long lastPush = 0;
-  if (millis() - lastPush < 500) return;  // ~2 Hz
+  if (millis() - lastPush < 500) return;
   lastPush = millis();
 
   String s = "STAT M:";
@@ -56,6 +55,14 @@ void pushLiveStatus() {
 
   pTxCharacteristic->setValue(s.c_str());
   pTxCharacteristic->notify();
+}
+
+// Forward a short command to Head (ESP-NOW) + optional UDP + ASK
+void forwardCmd(const char *msg) {
+  espnowSendCmd(msg);
+  udp.broadcastTo(msg, 1234);  // transitional fallback
+  Ask_TX.send((uint8_t *)msg, strlen(msg));
+  Ask_TX.waitPacketSent();
 }
 
 void processBLECommand(const String& raw) {
@@ -86,10 +93,7 @@ void processBLECommand(const String& raw) {
       {
         blePrintln("Flash Lamp!");
         flash_lamp();
-        const char *msg = "L0";
-        udp.broadcastTo(msg, 1234);
-        Ask_TX.send((uint8_t *)msg, strlen(msg));
-        Ask_TX.waitPacketSent();
+        forwardCmd("L0");
         break;
       }
     case 'S':
@@ -131,6 +135,7 @@ void processBLECommand(const String& raw) {
         blePrintln("Resync...");
         sendbackgroundloopReset();
         resetBrightnessandDirection();
+        forwardCmd("R0");
         break;
       }
     case 'Z':
@@ -152,9 +157,7 @@ void processBLECommand(const String& raw) {
         else if (mode == 10)
           msg[1] = 'A';
 
-        udp.broadcastTo(msg, 1234);
-        Ask_TX.send((uint8_t *)msg, strlen(msg));
-        Ask_TX.waitPacketSent();
+        forwardCmd(msg);
 
         blePrintln("Mode=" + String(mode));
         MODE.put(0, mode);
@@ -182,6 +185,7 @@ void processBLECommand(const String& raw) {
         status += "Mic:" + String(lastmiclevel) +
                   "  HeadB:" + String(head_brightness) +
                   "  HeadT:" + String(head_temperature) + "\n";
+        status += "ESP-NOW:" + String(espnowReady ? 1 : 0) + "\n";
         status += "**************************************\n";
         blePrint(status);
         break;
@@ -246,5 +250,4 @@ void setupBLE() {
 }
 
 void checkSerialBT() {
-  // No-op
 }

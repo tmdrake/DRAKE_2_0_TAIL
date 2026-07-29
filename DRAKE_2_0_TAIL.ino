@@ -4,8 +4,9 @@
  *
  * Updated July 2026:
  *   - NimBLE NUS + modes 0-10 + B/V controls
- *   - Binary unicast mic stream to Head
- *   - Live STAT push to app over BLE
+ *   - Encrypted ESP-NOW Tail↔Head (mic + cmds + sensor feedback)
+ *   - Analog mic: analogRead(A0) - OFFSET(1600) + sensitivity
+ *   - ASK TX still feeds PAWB claws
  */
 #if !defined(ESP32)
 #error This code is designed to run on ESP32 and ESP32-based boards! Please check your Tools->Board setting.
@@ -18,7 +19,7 @@
 #include <Adafruit_NeoPixel.h>
 Adafruit_NeoPixel spikes(12, LED_PIN, NEO_GRB + NEO_KHZ800);
 #define MIC A0
-#define OFFSET 1600
+#define OFFSET 1600   // Mic bias / mid-rail voltage offset (ADC counts)
 #define MAXBRIGHTNESS 75
 
 #include <Timer.h>
@@ -83,12 +84,24 @@ void setup() {
   Serial.println(__FILE__);
   Serial.println(__DATE__);
   Serial.println(__TIME__);
-  Serial.println("Drake Tail....GO! (binary mic + live STAT)");
+  Serial.println("Drake Tail....GO! (ESP-NOW + BLE)");
 
+  // WiFi STA first so channel follows Head SoftAP (ch 2)
   WiFi.mode(WIFI_STA);
   WiFi.setSleep(false);
   WiFi.begin(ssid, NULL);
   WiFi.config(ip, gateway, subnet);
+
+  // Give SoftAP a moment on the bench
+  unsigned long t0 = millis();
+  while (WiFi.status() != WL_CONNECTED && millis() - t0 < 5000) {
+    delay(100);
+  }
+  Serial.print("WiFi status: ");
+  Serial.println(WiFi.status() == WL_CONNECTED ? "connected" : "not connected (ESP-NOW still usable)");
+
+  // Encrypted ESP-NOW (prints this board's MAC; needs HEAD_PEER_MAC set)
+  setupEspNow();
 
   Serial.println("Restoring settings..");
   if (MODE.begin(EEPROM_SIZE)) {
@@ -123,7 +136,7 @@ void setup() {
   esp_task_wdt_init(WDT_TIMEOUT * 1000, true);
   enableLoopWDT();
 
-  // Head → Tail feedback (unicast preferred on Head side now)
+  // UDP sensor fallback (Head may still send 1235/1236 during transition)
   if (udp_head_light.listen(1235)) {
     udp_head_light.onPacket([](AsyncUDPPacket packet) {
       head_brightness = packet.parseInt();
@@ -145,7 +158,6 @@ void loop() {
     sound_detect();
   }
 
-  // Live telemetry to the app (~2 Hz when connected)
   pushLiveStatus();
 }
 
@@ -170,6 +182,7 @@ void sound_detect() {
     lastmiclevel = 0;
   }
 
+  // Analog mic trigger (same OFFSET bias as sampleaudio)
   long micLevel = analogRead(MIC) - OFFSET;
   if (micLevel > 100) {
     soundmode = true;
