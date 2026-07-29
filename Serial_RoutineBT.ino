@@ -38,7 +38,7 @@ void blePrintln(const String& msg) {
   blePrint(msg + "\n");
 }
 
-// ---------- Command parser (same behaviour as old SerialBT version) ----------
+// ---------- Command parser ----------
 void processBLECommand(const String& raw) {
   String cmd = raw;
   cmd.trim();
@@ -109,6 +109,8 @@ void processBLECommand(const String& raw) {
         char msg[3] = {'M', '0', '\0'};
         if (mode >= 0 && mode <= 9)
           msg[1] = '0' + mode;
+        else if (mode == 10)
+          msg[1] = 'A';  // simple marker for mode 10 over ASK/UDP
 
         udp.broadcastTo(msg, 1234);
         Ask_TX.send((uint8_t *)msg, strlen(msg));
@@ -128,12 +130,23 @@ void processBLECommand(const String& raw) {
         String status;
         status += "**************************************\n";
         status += "Available Commands:\n";
-        status += "L-Flash LEDs\n";
-        status += "R-Resync LEDs\n";
-        status += "E/e-Enable/Disable Sound detection\n";
-        status += "M<mode>-Mode control [0-10]\n";
-        status += "S<value>-Change sensitivity\n";
-        status += "Z-REBOOT\n";
+        status += "L - Flash LEDs\n";
+        status += "R - Resync LEDs\n";
+        status += "E/e - Enable/Disable Sound\n";
+        status += "M<mode> - Mode [0-10]\n";
+        status += "  0 Sound Phase\n";
+        status += "  1 Sound Distinct\n";
+        status += "  2 VU Meter\n";
+        status += "  3 Rainbow Chase\n";
+        status += "  4 Comet / Meteor\n";
+        status += "  5 Breathing Pulse\n";
+        status += "  6 Fire Flicker\n";
+        status += "  7 Sparkle / Twinkle\n";
+        status += "  8 Wave / Undulate\n";
+        status += "  9 Solid / Static\n";
+        status += " 10 Off / Blackout\n";
+        status += "S<value> - Sensitivity\n";
+        status += "Z - REBOOT\n";
         status += "**************************************\n";
         status += "M:" + String(mode) + "\n";
         status += "S:" + String(sensitivity) + "\n";
@@ -177,21 +190,19 @@ void setupBLE() {
   Serial.println("Starting NimBLE NUS...");
 
   NimBLEDevice::init("TMDrake_tail");
-  NimBLEDevice::setPower(ESP_PWR_LVL_P9);   // Stronger TX if needed
+  NimBLEDevice::setPower(ESP_PWR_LVL_P9);
 
   pServer = NimBLEDevice::createServer();
   pServer->setCallbacks(new ServerCallbacks());
 
   NimBLEService* pService = pServer->createService(NUS_SERVICE_UUID);
 
-  // RX Characteristic - phone writes commands here
   NimBLECharacteristic* pRxCharacteristic = pService->createCharacteristic(
       NUS_RX_UUID,
       NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_NR
   );
   pRxCharacteristic->setCallbacks(new RxCallbacks());
 
-  // TX Characteristic - we send responses / status here
   pTxCharacteristic = pService->createCharacteristic(
       NUS_TX_UUID,
       NIMBLE_PROPERTY::NOTIFY | NIMBLE_PROPERTY::READ
@@ -199,7 +210,6 @@ void setupBLE() {
 
   pService->start();
 
-  // Advertising - put NUS UUID in scan response for reliable discovery
   NimBLEAdvertising* pAdvertising = NimBLEDevice::getAdvertising();
   pAdvertising->setName("TMDrake_tail");
   pAdvertising->addServiceUUID(NUS_SERVICE_UUID);
@@ -212,8 +222,6 @@ void setupBLE() {
   Serial.println("Service UUID: " NUS_SERVICE_UUID);
 }
 
-// Compatibility stub so the old call site still compiles
-// (commands are now handled inside the onWrite callback)
 void checkSerialBT() {
   // No-op - BLE is event-driven via callbacks
 }
