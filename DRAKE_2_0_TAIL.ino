@@ -6,6 +6,7 @@
  *   - Classic Bluetooth SPP replaced with NimBLE Nordic UART Service (NUS)
  *   - Requires NimBLE-Arduino library (Library Manager -> "NimBLE-Arduino")
  *   - Device advertises as "TMDrake_tail" with NUS service UUID
+ *   - Modes 0-10 implemented (sound reactive + new visual modes)
  */
 #if !defined(ESP32)
 #error This code is designed to run on ESP32 and ESP32-based boards! Please check your Tools->Board setting.
@@ -61,6 +62,7 @@ float head_temperature = -1;
 //Settings varables................................
 int sensitivity = 75;  //Default Value
 int mode = 0;
+int lastMode = -1;     // track mode changes for clean restart
 bool enableSound = true;  //Disables sound//Controls detection of sound
 /////////////////////////////////////////////////////
 
@@ -94,7 +96,7 @@ void setup() {
   Serial.println(__FILE__);
   Serial.println(__DATE__);
   Serial.println(__TIME__);
-  Serial.println("Drake Tail....GO! (NimBLE NUS)");
+  Serial.println("Drake Tail....GO! (NimBLE NUS + Modes 0-10)");
 
   //Init WIFI (with static ip for direct communication)
   WiFi.mode(WIFI_STA);
@@ -106,7 +108,7 @@ void setup() {
   Serial.println("Restoring settings..");
   if (MODE.begin(EEPROM_SIZE)) {
     MODE.get(0, mode);
-    if (mode < 0 || mode >= 10) {
+    if (mode < 0 || mode > 10) {
       mode = 0;
       MODE.put(0, mode);
       MODE.commit();
@@ -161,39 +163,45 @@ void loop() {
   t.update();  //for flash and other async task
 
   if (!flashed) {
-    //Sound Activation
-    sound_detect();  //M0
+    //Sound Activation (modes 0-2) or continuous visual modes (3-10)
+    sound_detect();
   }
 
   /* BLE is event-driven via NimBLE callbacks - no polling needed */
-  // checkSerialBT();  // kept as empty stub for compatibility
 }
 
 
 
 void sound_detect() {
-  if (soundmode && enableSound) {
+  // Modes 3-10 run continuously (they are pure visual)
+  // Modes 0-2 are sound-reactive and only run while soundmode is active
 
+  if (mode >= 3 && mode <= 10) {
     mode_selector(mode);
+    digitalWrite(LED_BUILTIN, LOW);
+    return;
+  }
 
+  // Original sound-reactive behaviour for modes 0-2
+  if (soundmode && enableSound) {
+    mode_selector(mode);
     digitalWrite(LED_BUILTIN, HIGH);
     if (millis() - lastime > 10000) {
-      soundmode = false;  //put the system back into fading mode, after 10 seconds.
+      soundmode = false;
       resetBrightnessandDirection();
       sendbackgroundloopReset();
     }
   } else {
-
-
     fading();
     digitalWrite(LED_BUILTIN, LOW);
     lastmiclevel = 0;
   }
-  ///Check for Sound!
-  long micLevel = analogRead(MIC) - OFFSET;  //adafruit offset
-  if (micLevel > 100 /*TRIGGER SENSITIVITY*/) {
+
+  // Check for Sound!
+  long micLevel = analogRead(MIC) - OFFSET;
+  if (micLevel > 100) {
     soundmode = true;
-    lastime = millis();  //reset our timeout
+    lastime = millis();
   }
 }
 
@@ -206,9 +214,6 @@ void flash_lamp() {
 
 //Below are routines to save code
 void turn_all_off() {
-  /*
-  Turns all LED's off on the strip, resets flash off to resume animation
-  */
   for (uint16_t i = 0; i < spikes.numPixels(); i++)
     spikes.setPixelColor(i, spikes.Color(0, 0, 0));
   spikes.show();
@@ -216,32 +221,54 @@ void turn_all_off() {
 }
 
 void turn_all_on() {
-  /*Turns all LED's on on the strip*/
   for (uint16_t i = 0; i < spikes.numPixels(); i++)
     spikes.setPixelColor(i, spikes.Color(150, 150, 150));
   spikes.show();
 }
 
-void mode_selector(int mode) {
-  //Selects different mode like sound, lights, etc.
-  //Todo: Select modes to run the lighting programs
+void mode_selector(int m) {
+  // Restart animation state when mode changes
+  if (m != lastMode) {
+    resetModeState();
+    lastMode = m;
+  }
 
-  switch (mode) {
+  switch (m) {
     case 0:
-      soundloop(millis(), 50, false);
+      soundloop(millis(), 50, false);   // Sound Phase
       break;
-
     case 1:
-      soundloop(millis(), 50, true);
+      soundloop(millis(), 50, true);    // Sound Distinct
       break;
-
     case 2:
-      soundcheck();
+      soundcheck();                     // VU Meter
       break;
-
-    // Future modes 3-10 will go here
-
+    case 3:
+      mode_rainbow_chase();             // Rainbow Chase
+      break;
+    case 4:
+      mode_comet();                     // Comet / Meteor
+      break;
+    case 5:
+      mode_breathing();                 // Breathing Pulse
+      break;
+    case 6:
+      mode_fire();                      // Fire Flicker
+      break;
+    case 7:
+      mode_sparkle();                   // Sparkle / Twinkle
+      break;
+    case 8:
+      mode_wave();                      // Wave / Undulate
+      break;
+    case 9:
+      mode_solid();                     // Solid / Static
+      break;
+    case 10:
+      mode_off();                       // Off / Blackout
+      break;
     default:
       mode = 0;
+      break;
   }
 }
