@@ -46,26 +46,31 @@ void soundloop(unsigned long millis, long refresh_ms, bool color) {
   }
 }
 
+/*
+ * Analog mic path (unchanged):
+ *   raw = analogRead(MIC)          // ESP32 ADC
+ *   level = raw - OFFSET + sensitivity
+ *   OFFSET = 1600  (approx mid-rail / bias voltage of the mic preamp)
+ *
+ * Transport to Head: encrypted ESP-NOW (preferred)
+ * Transport to paws: ASK ASCII "m####" (unchanged)
+ */
 long sampleaudio() {
   long micLevel = analogRead(MIC) - OFFSET + sensitivity;
   if (micLevel < 0) micLevel = 0;
 
-  // ---- Binary unicast mic stream to Head (low latency) ----
-  // Only send when value changes enough (reduces airtime)
+  // ---- ESP-NOW mic stream to Head (low latency, encrypted) ----
   if (abs(micLevel - lastSentMic) >= 8 || micLevel == 0) {
     lastSentMic = micLevel;
-
-    // 2-byte big-endian int16
-    uint8_t buf[2];
     int16_t level16 = (int16_t)constrain(micLevel, 0, 32767);
-    buf[0] = (level16 >> 8) & 0xFF;
-    buf[1] = level16 & 0xFF;
+    espnowSendMic(level16);
 
-    // Unicast to Head SoftAP IP
-    udp.writeTo(buf, 2, IPAddress(192, 168, 4, 1), 1237);
+    // Optional UDP fallback while bringing ESP-NOW online on the bench:
+    // uint8_t buf[2] = { (uint8_t)((level16 >> 8) & 0xFF), (uint8_t)(level16 & 0xFF) };
+    // udp.writeTo(buf, 2, IPAddress(192, 168, 4, 1), 1237);
   }
 
-  // ---- ASK to paws (keep ASCII "m####" for compatibility) ----
+  // ---- ASK to paws (ASCII "m####") ----
   char msg[16];
   ltoa(micLevel, msg, 10);
   prepend(msg, "m");
