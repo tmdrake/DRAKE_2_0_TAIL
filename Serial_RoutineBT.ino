@@ -1,5 +1,5 @@
 /*
- * Serial_RoutineBT.ino  (now BLE / NimBLE NUS)
+ * Serial_RoutineBT.ino  (NimBLE NUS)
  * Remote command interface over Nordic UART Service
  *
  * Service UUID : 6E400001-B5A3-F393-E0A9-E50E24DCCA9E
@@ -8,28 +8,24 @@
  *
  * Device name  : TMDrake_tail
  *
- * Requires: NimBLE-Arduino library
- *   Arduino Library Manager -> "NimBLE-Arduino" by h2zero
+ * Requires: NimBLE-Arduino library (h2zero)
  */
 
 #include <NimBLEDevice.h>
 
-// Nordic UART Service UUIDs
 #define NUS_SERVICE_UUID      "6E400001-B5A3-F393-E0A9-E50E24DCCA9E"
-#define NUS_RX_UUID           "6E400002-B5A3-F393-E0A9-E50E24DCCA9E"  // Phone writes here
-#define NUS_TX_UUID           "6E400003-B5A3-F393-E0A9-E50E24DCCA9E"  // We notify here
+#define NUS_RX_UUID           "6E400002-B5A3-F393-E0A9-E50E24DCCA9E"
+#define NUS_TX_UUID           "6E400003-B5A3-F393-E0A9-E50E24DCCA9E"
 
 NimBLECharacteristic* pTxCharacteristic = nullptr;
 NimBLEServer* pServer = nullptr;
 bool deviceConnected = false;
 
-// Helper: send a string back to the connected phone via TX notifications
 void blePrint(const String& msg) {
   if (pTxCharacteristic && deviceConnected) {
     pTxCharacteristic->setValue(msg.c_str());
     pTxCharacteristic->notify();
   }
-  // Also mirror to USB serial for debugging
   Serial.print("[BLE] ");
   Serial.println(msg);
 }
@@ -38,7 +34,6 @@ void blePrintln(const String& msg) {
   blePrint(msg + "\n");
 }
 
-// ---------- Command parser ----------
 void processBLECommand(const String& raw) {
   String cmd = raw;
   cmd.trim();
@@ -84,6 +79,29 @@ void processBLECommand(const String& raw) {
         blePrintln("Sensitivity=" + String(sensitivity));
         break;
       }
+    case 'B':
+      {
+        int temp = cmd.substring(1).toInt();
+        if (temp >= 0 && temp <= 100) {
+          masterBrightness = temp;
+          applyMasterBrightness();
+          BRIGHTNESS.put(0, masterBrightness);
+          BRIGHTNESS.commit();
+        }
+        blePrintln("Brightness=" + String(masterBrightness));
+        break;
+      }
+    case 'V':
+      {
+        int temp = cmd.substring(1).toInt();
+        if (temp >= 0 && temp <= 100) {
+          animSpeed = temp;
+          SPEED.put(0, animSpeed);
+          SPEED.commit();
+        }
+        blePrintln("Speed=" + String(animSpeed));
+        break;
+      }
     case 'R':
       {
         blePrintln("Resync...");
@@ -110,7 +128,7 @@ void processBLECommand(const String& raw) {
         if (mode >= 0 && mode <= 9)
           msg[1] = '0' + mode;
         else if (mode == 10)
-          msg[1] = 'A';  // simple marker for mode 10 over ASK/UDP
+          msg[1] = 'A';
 
         udp.broadcastTo(msg, 1234);
         Ask_TX.send((uint8_t *)msg, strlen(msg));
@@ -129,31 +147,26 @@ void processBLECommand(const String& raw) {
       {
         String status;
         status += "**************************************\n";
-        status += "Available Commands:\n";
-        status += "L - Flash LEDs\n";
-        status += "R - Resync LEDs\n";
-        status += "E/e - Enable/Disable Sound\n";
-        status += "M<mode> - Mode [0-10]\n";
-        status += "  0 Sound Phase\n";
-        status += "  1 Sound Distinct\n";
-        status += "  2 VU Meter\n";
-        status += "  3 Rainbow Chase\n";
-        status += "  4 Comet / Meteor\n";
-        status += "  5 Breathing Pulse\n";
-        status += "  6 Fire Flicker\n";
-        status += "  7 Sparkle / Twinkle\n";
-        status += "  8 Wave / Undulate\n";
-        status += "  9 Solid / Static\n";
-        status += " 10 Off / Blackout\n";
+        status += "Commands:\n";
+        status += "L - Flash\n";
+        status += "R - Resync\n";
+        status += "E/e - Sound on/off\n";
+        status += "M<0-10> - Mode\n";
+        status += "  0 Sound Phase  1 Sound Distinct\n";
+        status += "  2 VU  3 Rainbow  4 Comet\n";
+        status += "  5 Breath  6 Fire  7 Sparkle\n";
+        status += "  8 Wave  9 Solid  10 Off\n";
+        status += "B<0-100> - Master Brightness\n";
+        status += "V<0-100> - Animation Speed\n";
         status += "S<value> - Sensitivity\n";
         status += "Z - REBOOT\n";
         status += "**************************************\n";
-        status += "M:" + String(mode) + "\n";
-        status += "S:" + String(sensitivity) + "\n";
-        status += "E:" + String(enableSound) + "\n";
-        status += "Last Mic:" + String(lastmiclevel) + "\n";
-        status += "Head Brightness:" + String(head_brightness) + "\n";
-        status += "Head Temperature:" + String(head_temperature) + "\n";
+        status += "M:" + String(mode) + "  B:" + String(masterBrightness) +
+                  "  V:" + String(animSpeed) + "\n";
+        status += "S:" + String(sensitivity) + "  E:" + String(enableSound) + "\n";
+        status += "Mic:" + String(lastmiclevel) +
+                  "  HeadB:" + String(head_brightness) +
+                  "  HeadT:" + String(head_temperature) + "\n";
         status += "**************************************\n";
         blePrint(status);
         break;
@@ -161,13 +174,11 @@ void processBLECommand(const String& raw) {
   }
 }
 
-// ---------- NimBLE Callbacks ----------
 class ServerCallbacks : public NimBLEServerCallbacks {
   void onConnect(NimBLEServer* pServer) {
     deviceConnected = true;
     Serial.println("BLE client connected");
   }
-
   void onDisconnect(NimBLEServer* pServer) {
     deviceConnected = false;
     Serial.println("BLE client disconnected - restarting advertising");
@@ -179,13 +190,11 @@ class RxCallbacks : public NimBLECharacteristicCallbacks {
   void onWrite(NimBLECharacteristic* pCharacteristic) {
     std::string value = pCharacteristic->getValue();
     if (value.length() > 0) {
-      String cmd = String(value.c_str());
-      processBLECommand(cmd);
+      processBLECommand(String(value.c_str()));
     }
   }
 };
 
-// ---------- Setup BLE (call once from setup()) ----------
 void setupBLE() {
   Serial.println("Starting NimBLE NUS...");
 
@@ -219,9 +228,8 @@ void setupBLE() {
   pAdvertising->start();
 
   Serial.println("NimBLE NUS advertising as TMDrake_tail");
-  Serial.println("Service UUID: " NUS_SERVICE_UUID);
 }
 
 void checkSerialBT() {
-  // No-op - BLE is event-driven via callbacks
+  // No-op
 }
