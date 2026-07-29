@@ -21,23 +21,23 @@ Suggestions compiled for evolving the networkable dragonsuit lighting system (He
 - Connection interval / MTU fine-tuning
 - Larger command set (brightness, speed, themes, etc.)
 
-## 2. Expanded Lighting Modes
+## 2. Expanded Lighting Modes  ✅ IMPLEMENTED
 
-| Mode | Name              | Description                              | Notes |
-|------|-------------------|------------------------------------------|-------|
-| 0    | Sound Phase       | Color-phase sound reactive (current)     | Keep  |
-| 1    | Sound Distinct    | Hard color cycle sound reactive          | Keep  |
-| 2    | VU Meter          | Classic bar graph                        | Keep  |
-| 3    | Rainbow Chase     | Smooth flowing rainbow                   | New   |
-| 4    | Comet / Meteor    | Bright head + fading trail               | New   |
-| 5    | Breathing Pulse   | Slow sine brightness + color shift       | New   |
-| 6    | Fire Flicker      | Orange/red random flicker + upward drift | New   |
-| 7    | Sparkle / Twinkle | Random bright sparkles on dark base      | New   |
-| 8    | Wave / Undulate   | Soft traveling brightness wave           | New   |
-| 9    | Solid / Static    | Single controllable color                | New   |
-| 10   | Off / Blackout    | Everything off                           | New   |
+| Mode | Name              | Description                              | Status |
+|------|-------------------|------------------------------------------|--------|
+| 0    | Sound Phase       | Color-phase sound reactive               | Keep   |
+| 1    | Sound Distinct    | Hard color cycle sound reactive          | Keep   |
+| 2    | VU Meter          | Classic bar graph                        | Keep   |
+| 3    | Rainbow Chase     | Smooth flowing rainbow                   | ✅ New |
+| 4    | Comet / Meteor    | Bright head + fading trail               | ✅ New |
+| 5    | Breathing Pulse   | Slow sine brightness + color shift       | ✅ New |
+| 6    | Fire Flicker      | Orange/red random flicker + upward drift | ✅ New |
+| 7    | Sparkle / Twinkle | Random bright sparkles on dark base      | ✅ New |
+| 8    | Wave / Undulate   | Soft traveling brightness wave           | ✅ New |
+| 9    | Solid / Static    | Single controllable color                | ✅ New |
+| 10   | Off / Blackout    | Everything off                           | ✅ New |
 
-All new modes must stay non-blocking (millis-based) so the main loop, WiFi, BLE, and ASK keep running.
+All new modes are non-blocking (millis-based). Implemented in `New_Modes.ino`.
 
 ## 3. Tuning Parameters (Expose via App)
 
@@ -109,7 +109,7 @@ High-impact changes already identified:
 
 1. ~~Port Tail serial interface to NimBLE NUS (keep command compatibility)~~ ✅ Done
 2. Apply binary UDP + power-save + unicast fixes (partial – power-save done on Tail)
-3. Expand `mode_selector()` with new non-blocking animations
+3. ~~Expand `mode_selector()` with new non-blocking animations~~ ✅ Done
 4. Extend command parser for all new tuning parameters
 5. Build / brand the companion app
 6. (Optional) Add ESP-NOW mic path + accelerometer mode
@@ -117,4 +117,4 @@ High-impact changes already identified:
 ---
 
 *Generated from design discussion – July 2026*
-*Updated after NimBLE NUS implementation.*
+*Updated after NimBLE NUS + expanded modes implementation.*
