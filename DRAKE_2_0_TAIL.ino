@@ -3,9 +3,9 @@
  * Board version 2.0.17
  *
  * Updated July 2026:
- *   - NimBLE Nordic UART Service (NUS)
- *   - Modes 0-10
- *   - Master brightness (B) + animation speed (V)
+ *   - NimBLE NUS + modes 0-10 + B/V controls
+ *   - Binary unicast mic stream to Head
+ *   - Live STAT push to app over BLE
  */
 #if !defined(ESP32)
 #error This code is designed to run on ESP32 and ESP32-based boards! Please check your Tools->Board setting.
@@ -20,7 +20,6 @@ Adafruit_NeoPixel spikes(12, LED_PIN, NEO_GRB + NEO_KHZ800);
 #define MIC A0
 #define OFFSET 1600
 #define MAXBRIGHTNESS 75
-//#define DEBUG_MIC
 
 #include <Timer.h>
 Timer t;
@@ -49,13 +48,12 @@ unsigned long lastmiclevel = -1;
 int head_brightness = -1;
 float head_temperature = -1;
 
-// Settings
 int sensitivity = 75;
 int mode = 0;
 int lastMode = -1;
 bool enableSound = true;
-int masterBrightness = 80;   // 0-100 %
-int animSpeed = 50;          // 0-100 (50 = normal)
+int masterBrightness = 80;
+int animSpeed = 50;
 
 #include <EEPROM.h>
 #define EEPROM_SIZE 8
@@ -66,7 +64,6 @@ EEPROMClass BRIGHTNESS("B");
 EEPROMClass SPEED("V");
 
 void applyMasterBrightness() {
-  // NeoPixel brightness is 0-255
   uint8_t scaled = map(constrain(masterBrightness, 0, 100), 0, 100, 0, 255);
   spikes.setBrightness(scaled);
   spikes.show();
@@ -86,7 +83,7 @@ void setup() {
   Serial.println(__FILE__);
   Serial.println(__DATE__);
   Serial.println(__TIME__);
-  Serial.println("Drake Tail....GO! (NimBLE + Modes + Brightness/Speed)");
+  Serial.println("Drake Tail....GO! (binary mic + live STAT)");
 
   WiFi.mode(WIFI_STA);
   WiFi.setSleep(false);
@@ -121,12 +118,12 @@ void setup() {
   }
 
   applyMasterBrightness();
-
   setupBLE();
 
   esp_task_wdt_init(WDT_TIMEOUT * 1000, true);
   enableLoopWDT();
 
+  // Head → Tail feedback (unicast preferred on Head side now)
   if (udp_head_light.listen(1235)) {
     udp_head_light.onPacket([](AsyncUDPPacket packet) {
       head_brightness = packet.parseInt();
@@ -147,6 +144,9 @@ void loop() {
   if (!flashed) {
     sound_detect();
   }
+
+  // Live telemetry to the app (~2 Hz when connected)
+  pushLiveStatus();
 }
 
 void sound_detect() {

@@ -2,13 +2,8 @@
  * Serial_RoutineBT.ino  (NimBLE NUS)
  * Remote command interface over Nordic UART Service
  *
- * Service UUID : 6E400001-B5A3-F393-E0A9-E50E24DCCA9E
- * RX  (write)  : 6E400002-B5A3-F393-E0A9-E50E24DCCA9E
- * TX  (notify) : 6E400003-B5A3-F393-E0A9-E50E24DCCA9E
- *
- * Device name  : TMDrake_tail
- *
- * Requires: NimBLE-Arduino library (h2zero)
+ * Also pushes live status to the app:
+ *   STAT M:.. B:.. V:.. S:.. E:.. Mic:.. HeadB:.. HeadT:..
  */
 
 #include <NimBLEDevice.h>
@@ -32,6 +27,35 @@ void blePrint(const String& msg) {
 
 void blePrintln(const String& msg) {
   blePrint(msg + "\n");
+}
+
+// Lightweight live status for the app (single line, easy to parse)
+void pushLiveStatus() {
+  if (!deviceConnected || !pTxCharacteristic) return;
+
+  static unsigned long lastPush = 0;
+  if (millis() - lastPush < 500) return;  // ~2 Hz
+  lastPush = millis();
+
+  String s = "STAT M:";
+  s += mode;
+  s += " B:";
+  s += masterBrightness;
+  s += " V:";
+  s += animSpeed;
+  s += " S:";
+  s += sensitivity;
+  s += " E:";
+  s += enableSound ? 1 : 0;
+  s += " Mic:";
+  s += lastmiclevel;
+  s += " HeadB:";
+  s += head_brightness;
+  s += " HeadT:";
+  s += head_temperature;
+
+  pTxCharacteristic->setValue(s.c_str());
+  pTxCharacteristic->notify();
 }
 
 void processBLECommand(const String& raw) {
@@ -105,7 +129,6 @@ void processBLECommand(const String& raw) {
     case 'R':
       {
         blePrintln("Resync...");
-        Serial.println("Resync...");
         sendbackgroundloopReset();
         resetBrightnessandDirection();
         break;
@@ -113,7 +136,6 @@ void processBLECommand(const String& raw) {
     case 'Z':
       {
         blePrintln("REBOOTING...");
-        Serial.println("REBOOTING...");
         delay(500);
         ESP.restart();
         break;
@@ -135,9 +157,6 @@ void processBLECommand(const String& raw) {
         Ask_TX.waitPacketSent();
 
         blePrintln("Mode=" + String(mode));
-        Serial.print("Mode=");
-        Serial.println(mode);
-
         MODE.put(0, mode);
         MODE.commit();
         break;
@@ -152,12 +171,8 @@ void processBLECommand(const String& raw) {
         status += "R - Resync\n";
         status += "E/e - Sound on/off\n";
         status += "M<0-10> - Mode\n";
-        status += "  0 Sound Phase  1 Sound Distinct\n";
-        status += "  2 VU  3 Rainbow  4 Comet\n";
-        status += "  5 Breath  6 Fire  7 Sparkle\n";
-        status += "  8 Wave  9 Solid  10 Off\n";
-        status += "B<0-100> - Master Brightness\n";
-        status += "V<0-100> - Animation Speed\n";
+        status += "B<0-100> - Brightness\n";
+        status += "V<0-100> - Speed\n";
         status += "S<value> - Sensitivity\n";
         status += "Z - REBOOT\n";
         status += "**************************************\n";
