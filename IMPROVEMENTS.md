@@ -2,25 +2,24 @@
 
 Suggestions compiled for evolving the networkable dragonsuit lighting system (Head ESP8266 + Tail ESP32 + Paw Arduino).
 
-## 1. Switch Remote Serial to BLE (Nordic UART Service)
+## 1. Switch Remote Serial to BLE (Nordic UART Service)  ✅ IMPLEMENTED
 
-**Current:** Classic Bluetooth SPP (`BluetoothSerial` "TMDrake_tail").
+**Status (July 2026):** Classic Bluetooth SPP has been replaced with **NimBLE Nordic UART Service**.
 
-**Recommended:** Move to BLE Nordic UART Service (NUS) using **NimBLE-Arduino** for lower RAM/flash use and better modern phone compatibility.
+- Device advertises as `TMDrake_tail`
+- NUS Service UUID is included in advertising/scan response for reliable discovery
+- All original commands preserved (`M`, `S`, `E/e`, `L`, `R`, `Z`, `?`)
+- Responses sent via TX notifications
+- Arduino + NimBLE path locked in until Drake_3.0
 
-### Benefits
-- Better battery life
-- Works reliably with current Android/iOS
-- Easier pairing
-- Can keep the exact same command set
+### Benefits achieved
+- Better modern phone compatibility
+- Lower power than Classic SPP
+- Service-UUID filtering works for Flutter / nRF Connect
 
-### Suggested Libraries
-- NimBLE-Arduino + NuS-NimBLE-Serial / Serial_BLE / BLESerial (with `BLESERIAL_USE_NIMBLE=true`)
-
-### Latency Tuning for BLE
-- Connection interval: 7.5–15 ms
-- Larger MTU (247+)
-- Prefer notifications over polling
+### Still open / future tuning
+- Connection interval / MTU fine-tuning
+- Larger command set (brightness, speed, themes, etc.)
 
 ## 2. Expanded Lighting Modes
 
@@ -81,7 +80,7 @@ L                // Flash
 
 ### Recommended Stack
 - **Flutter** (single codebase for Android + iOS)
-- Nordic UART Service support
+- Nordic UART Service support (`flutter_blue_plus` recommended)
 - Dark purple/blue dragon theme, logo, suit-inspired icons
 
 ### App Features
@@ -92,14 +91,14 @@ L                // Flash
 - Live status (mode, mic level, head temp if streamed)
 - Optional animated dragon head that reacts to mic level
 
-**Quick start alternative:** Fork SimpleBluetoothLeTerminal (Android) and re-skin, or use nRF Connect temporarily.
+**Quick start alternative:** nRF Connect or Serial Bluetooth Terminal (BLE mode) until custom app is ready.
 
 ## 6. UDP / WiFi Latency Optimizations (for animations & mic stream)
 
 High-impact changes already identified:
 
 1. **Binary unicast mic packets** instead of ASCII + broadcast
-2. **Disable WiFi power save** on both boards
+2. **Disable WiFi power save** on both boards  ✅ (Tail now calls `WiFi.setSleep(false)`)
    - Tail (ESP32): `WiFi.setSleep(false);` or `esp_wifi_set_ps(WIFI_PS_NONE);`
    - Head (ESP8266): `WiFi.setSleepMode(WIFI_NONE_SLEEP);`
 3. Only stream mic data while soundmode is active + change-threshold
@@ -108,8 +107,8 @@ High-impact changes already identified:
 
 ## 7. Implementation Priority Suggestion
 
-1. Port Tail serial interface to NimBLE NUS (keep command compatibility)
-2. Apply binary UDP + power-save + unicast fixes
+1. ~~Port Tail serial interface to NimBLE NUS (keep command compatibility)~~ ✅ Done
+2. Apply binary UDP + power-save + unicast fixes (partial – power-save done on Tail)
 3. Expand `mode_selector()` with new non-blocking animations
 4. Extend command parser for all new tuning parameters
 5. Build / brand the companion app
@@ -118,4 +117,4 @@ High-impact changes already identified:
 ---
 
 *Generated from design discussion – July 2026*
-*Feel free to turn sections into Issues or implement piece by piece.*
+*Updated after NimBLE NUS implementation.*

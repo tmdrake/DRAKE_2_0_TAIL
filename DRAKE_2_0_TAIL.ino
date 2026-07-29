@@ -1,7 +1,11 @@
 /*
  * Based On the Node32S - 4MB flash/NO-OTA! LARGE APP NEEDED. FLASH-ROM at 40Mhz.
  * Board version 2.0.17 (only works for now 12-29-2024)
- * 
+ *
+ * Updated July 2026:
+ *   - Classic Bluetooth SPP replaced with NimBLE Nordic UART Service (NUS)
+ *   - Requires NimBLE-Arduino library (Library Manager -> "NimBLE-Arduino")
+ *   - Device advertises as "TMDrake_tail" with NUS service UUID
  */
 #if !defined(ESP32)
 #error This code is designed to run on ESP32 and ESP32-based boards! Please check your Tools->Board setting.
@@ -9,7 +13,6 @@
 
 #include <esp_task_wdt.h>
 #define WDT_TIMEOUT 30  // Timeout in seconds
-//esp_err_t ESP32_ERROR;
 
 #define LED_PIN 22  //Where our driver is connected to..
 #include <Adafruit_NeoPixel.h>
@@ -69,26 +72,11 @@ EEPROMClass SENSITIVITY("S");
 EEPROMClass ENABLESOUND("E");
 //Might use eppromEX to store everything from a construct
 
-//Setup Blutooth
-#include "BluetoothSerial.h"
-#if !defined(CONFIG_BT_ENABLED) || !defined(CONFIG_BLUEDROID_ENABLED)
-#error Bluetooth is not enabled! Please run `make menuconfig` to and enable it
-#endif
-
-#if !defined(CONFIG_BT_SPP_ENABLED)
-#error Serial Bluetooth not available or not enabled. It is only available for the ESP32 chip.
-#endif
-
-BluetoothSerial SerialBT;
-boolean confirmRequestPending = true;
+// BLE is now handled in Serial_RoutineBT.ino (NimBLE NUS)
+// No more BluetoothSerial / Classic SPP
 
 void setup() {
   // put your setup code here, to run once:
-  //Configure Bluetooth
-  SerialBT.enableSSP();
-  SerialBT.onConfirmRequest(BTConfirmRequestCallback);
-  SerialBT.onAuthComplete(BTAuthCompleteCallback);
-  SerialBT.begin("TMDrake_tail");  //Bluetooth device name
 
   //Init ASK Transmitter
   pinMode(TRANSMITTER, OUTPUT);
@@ -101,20 +89,16 @@ void setup() {
   //Neopixel Library init
   spikes.begin();  // INITIALIZE NeoPixel spikes object (REQUIRED)
   spikes.show();   // Turn OFF all pixels ASAP
-  //spikes.setBrightness(200); //need full nightness
 
-  //Enable timer
-  //t.every(1, soundcheck);
-
-  //Serial.begin(115200);
   Serial.begin(115200);
   Serial.println(__FILE__);
   Serial.println(__DATE__);
   Serial.println(__TIME__);
-  Serial.println("Drake Tail....GO!");
+  Serial.println("Drake Tail....GO! (NimBLE NUS)");
 
   //Init WIFI (with static ip for direct communication)
   WiFi.mode(WIFI_STA);
+  WiFi.setSleep(false);          // Disable power-save for lower latency
   WiFi.begin(ssid, NULL);
   WiFi.config(ip, gateway, subnet);
 
@@ -151,63 +135,21 @@ void setup() {
     Serial.println(enableSound);
   }
 
+  // Start NimBLE Nordic UART Service (defined in Serial_RoutineBT.ino)
+  setupBLE();
 
-  //esp_task_wdt_deinit();
-  // // Task Watchdog configuration
-  // esp_task_wdt_config_t wdt_config = {
-  //   .timeout_ms = WDT_TIMEOUT * 1000,                 // Convertin ms
-  //   .idle_core_mask = (1 << portNUM_PROCESSORS) - 1,  // Bitmask of all cores, https://github.com/espressif/esp-idf/blob/v5.2.2/examples/system/task_watchdog/main/task_watchdog_example_main.c
-  //   .trigger_panic = true                             // Enable panic to restart ESP32
-  //  };
-  // // WDT Init
-  // ESP32_ERROR = esp_task_wdt_init(&wdt_config);
-  //  Serial.println("Last Reset : " + String(esp_err_to_name(ESP32_ERROR)));
-  //  esp_task_wdt_add(NULL);  //add current thread to WDT watch
-  esp_task_wdt_init(WDT_TIMEOUT * 1000, true);  //conifgure the wdt for 30 seconds before firing off
+  esp_task_wdt_init(WDT_TIMEOUT * 1000, true);
   enableLoopWDT();
 
   /**************************************/
   if (udp_head_light.listen(1235)) {
     udp_head_light.onPacket([](AsyncUDPPacket packet) {
-      //Serial.print("UDP Packet Type: ");
-      //Serial.println(packet.isBroadcast()?"Broadcast":packet.isMulticast()?"Multicast":"Unicast");
-      // Serial.print(", From: ");
-      // Serial.print(packet.remoteIP());
-      // Serial.print(":");
-      // Serial.print(packet.remotePort());
-      // Serial.print(", To: ");
-      // Serial.print(packet.localIP());
-      // Serial.print(":");
-      // Serial.print(packet.localPort());
-      //Serial.print(", Length: ");
-      //Serial.println(packet.length());
-      //Serial.print("Head Light (0-1024): ");
-      //String headlight = String(packet.parseInt());
-      //Serial.write(packet.data(), packet.length());
-      //Serial.println(packet.parseInt());
       head_brightness = packet.parseInt();
       if (head_brightness < 0) head_brightness = 0;
     });
   }
   if (udp_head_temp.listen(1236)) {
-    //Serial.print("UDP Listening on IP: ");
-    //Serial.println(WiFi.localIP());
     udp_head_temp.onPacket([](AsyncUDPPacket packet) {
-      //Serial.print("UDP Packet Type: ");
-      //Serial.println(packet.isBroadcast()?"Broadcast":packet.isMulticast()?"Multicast":"Unicast");
-      // Serial.print(", From: ");
-      // Serial.print(packet.remoteIP());
-      // Serial.print(":");
-      // Serial.print(packet.remotePort());
-      // Serial.print(", To: ");
-      // Serial.print(packet.localIP());
-      // Serial.print(":");
-      // Serial.print(packet.localPort());
-      //.print(", Length: ");
-      //Serial.println(packet.length());
-      //Serial.print("Head Temp: ");
-      //Serial.print(packet.parseFloat());
-      //Serial.println();
       head_temperature = packet.parseFloat();
       if (head_temperature < 0) head_temperature = 0;
     });
@@ -215,29 +157,16 @@ void setup() {
 }
 
 void loop() {
-  // put your main code here, to run repeatedly:
-  //rainbow(10); ///using a 10ms delay
-
   //Update Timer
-  t.update();  //for flash and aother async task
-  ///////////////?/
-
+  t.update();  //for flash and other async task
 
   if (!flashed) {
     //Sound Activation
-    //soundcheck(); //M1
     sound_detect();  //M0
-    ///////////////////////
-    //mode_selector(mode);
   }
 
-  /*Handles the BT interface task*/
-  checkSerialBT();  //check serial_BT task
-
-  //Handling Confirmation of SSP
-  if (confirmRequestPending)
-    SerialBT.confirmReply(true);
-  //******************************
+  /* BLE is event-driven via NimBLE callbacks - no polling needed */
+  // checkSerialBT();  // kept as empty stub for compatibility
 }
 
 
@@ -245,7 +174,6 @@ void loop() {
 void sound_detect() {
   if (soundmode && enableSound) {
 
-    //soundloop(millis(), 50, false);  //false = color phase, true = distinct colors
     mode_selector(mode);
 
     digitalWrite(LED_BUILTIN, HIGH);
@@ -263,8 +191,6 @@ void sound_detect() {
   }
   ///Check for Sound!
   long micLevel = analogRead(MIC) - OFFSET;  //adafruit offset
-    //Serial.println(micLevel);
-    //delay(10);
   if (micLevel > 100 /*TRIGGER SENSITIVITY*/) {
     soundmode = true;
     lastime = millis();  //reset our timeout
@@ -276,9 +202,6 @@ void flash_lamp() {
   turn_all_on();
   t.after(100, turn_all_off);
   flashed = true;
-  //delay(100); //Need to do this without delay
-
-  //turn_all_off();
 }
 
 //Below are routines to save code
@@ -299,21 +222,6 @@ void turn_all_on() {
   spikes.show();
 }
 
-
-void BTConfirmRequestCallback(uint32_t numVal) {
-  confirmRequestPending = true;
-  Serial.println(numVal);
-}
-
-void BTAuthCompleteCallback(boolean success) {
-  confirmRequestPending = false;
-  if (success) {
-    Serial.println("Pairing success!!");
-  } else {
-    Serial.println("Pairing failed, rejected by user!!");
-  }
-}
-
 void mode_selector(int mode) {
   //Selects different mode like sound, lights, etc.
   //Todo: Select modes to run the lighting programs
@@ -325,30 +233,14 @@ void mode_selector(int mode) {
 
     case 1:
       soundloop(millis(), 50, true);
-      //xmas_fading();
       break;
 
     case 2:
-      //fading();
       soundcheck();
       break;
 
-    // case 3:
-    //   //color_paturn_1();
-    //   break;
+    // Future modes 3-10 will go here
 
-    // case 4:
-    //   //accelerometer_detect(); //Color by Acceleration
-    //   break;
-
-    // case 5:
-    //   //sound_vu(); //close to an off state
-
-    //   break;
-
-    // case 6:
-    //   //police_mode(); //close to an off state
-    //   break;
     default:
       mode = 0;
   }
