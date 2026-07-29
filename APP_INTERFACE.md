@@ -1,12 +1,14 @@
 # TMDrake Companion App – Interface Contract
 
-**Version:** 1.0  
+**Version:** 1.1  
 **Date:** July 2026  
 **Target:** Sleek Android app (Flutter preferred) branded TMDrake / Drake Dragon  
 **Hardware:** ESP32 Tail (`TMDrake_tail`) via BLE Nordic UART Service
 
 This document is the formal contract between the suit firmware and the mobile app.  
 Any agent implementing the app should treat this as the source of truth.
+
+Full suit architecture (pins, UDP ports, ASK, modes): **[SYSTEM.md](SYSTEM.md)**
 
 ---
 
@@ -61,7 +63,7 @@ All commands are **plain ASCII / UTF-8 strings** written to the RX characteristi
 No null terminator required. Trim whitespace on the firmware side.
 
 | Command | Format | Range / Values | Description |
-|---------|--------|----------------|-------------|--------|
+|---------|--------|----------------|-------------|
 | Mode | `M<n>` | 0–10 | Set lighting mode |
 | Brightness | `B<n>` | 0–100 | Master brightness % |
 | Speed | `V<n>` | 0–100 | Animation speed (50 = normal) |
@@ -102,51 +104,30 @@ No null terminator required. Trim whitespace on the firmware side.
 
 Responses arrive as **notifications** on the TX characteristic (UTF-8 text).
 
-### Status dump (`?`)
-Example response (multi-line):
+### Live telemetry (preferred for UI meters)
+While connected, the Tail pushes ~2 times per second:
 
-```
-**************************************
-Commands:
-L - Flash
-R - Resync
-E/e - Sound on/off
-M<0-10> - Mode
-  0 Sound Phase  1 Sound Distinct
-  2 VU  3 Rainbow  4 Comet
-  5 Breath  6 Fire  7 Sparkle
-  8 Wave  9 Solid  10 Off
-B<0-100> - Master Brightness
-V<0-100> - Animation Speed
-S<value> - Sensitivity
-Z - REBOOT
-**************************************
-M:3  B:80  V:50
-S:75  E:1
-Mic:1423  HeadB:512  HeadT:36.5
-**************************************
+```text
+STAT M:3 B:80 V:50 S:75 E:1 Mic:1423 HeadB:512 HeadT:36.5
 ```
 
-### Key-value lines the app should parse
-After a `?` (or any response), look for lines containing:
+Parse any line starting with `STAT` (space-separated `Key:Value` tokens).
 
-- `M:<int>` → current mode
-- `B:<int>` → brightness
-- `V:<int>` → speed
-- `S:<int>` → sensitivity
-- `E:<0|1>` → sound enabled
-- `Mic:<int>` → last mic level
-- `HeadB:<int>` → head brightness (if available)
-- `HeadT:<float>` → head temperature (if available)
+| Token | Meaning |
+|-------|--------|
+| `M` | Current mode |
+| `B` | Master brightness 0–100 |
+| `V` | Animation speed 0–100 |
+| `S` | Sensitivity |
+| `E` | Sound enable 0/1 |
+| `Mic` | Last peak mic level |
+| `HeadB` | Head light sensor |
+| `HeadT` | Head temperature °F |
 
-Also accept short confirmations:
-- `Mode=3`
-- `Brightness=80`
-- `Speed=50`
-- `Sensitivity=75`
-- `Flash Lamp!`
-- `Resync...`
-- etc.
+### Full status dump (`?`)
+Multi-line help + same key fields. Still useful for debug.
+
+Also accept short confirmations such as `Mode=3`, `Brightness=80`, `Speed=50`, `Flash Lamp!`, `Resync...`.
 
 ---
 
@@ -161,13 +142,13 @@ Also accept short confirmations:
    - Sensitivity slider (`S`)
    - Sound enable toggle (`E` / `e`)
    - Quick actions: Flash (`L`), Resync (`R`)
-3. **Status** – live mic level, head temp/brightness, connection RSSI
+3. **Status** – live mic level, head temp/brightness from `STAT`, connection RSSI
 4. **Settings** – branding, about, reconnect behaviour, (future presets)
 
 ### Interaction rules
 - Every slider / toggle writes the corresponding command immediately (or debounced 100–150 ms).
-- After changing mode / brightness / speed, optionally send `?` to confirm.
-- Show a subtle “dragon pulse” or activity indicator when mic level is high.
+- Prefer parsing continuous `STAT` lines over polling `?`.
+- Show a subtle activity indicator when `Mic` is high.
 - Offline / disconnected state must be obvious (greyed controls + reconnect CTA).
 
 ---
@@ -185,31 +166,18 @@ Produce a consistent icon set (preferably SVG or high-res PNG, dark-theme friend
 - Dragon / TMDrake logo mark
 
 **Modes (11 icons)**
-- Sound Phase
-- Sound Distinct
-- VU Meter
-- Rainbow Chase
-- Comet
-- Breathing
-- Fire
-- Sparkle
-- Wave
-- Solid
-- Off / Blackout
+- Sound Phase, Sound Distinct, VU Meter, Rainbow Chase, Comet, Breathing, Fire, Sparkle, Wave, Solid, Off / Blackout
 
 **Sliders / status**
-- Brightness (sun / rays)
-- Speed (gauge / rabbit-turtle or motion lines)
-- Mic / Sensitivity
-- Temperature (optional)
+- Brightness, Speed, Mic / Sensitivity, Temperature (optional)
 
-Style notes: rounded, slightly aggressive geometry, purple/cyan dual-tone, good contrast on near-black backgrounds.
+Style: rounded, slightly aggressive geometry, purple/cyan dual-tone, good contrast on near-black.
 
 ---
 
 ## 7. Non-Goals (for v1)
 
-- Controlling the Head or PAWB directly over BLE (everything goes through the Tail)
+- Controlling Head or PAWB directly over BLE (everything goes through the Tail)
 - Custom firmware OTA
 - Multiple simultaneous suits (single connection is fine for v1)
 - iOS-specific optimisations beyond basic Flutter compatibility
@@ -218,11 +186,11 @@ Style notes: rounded, slightly aggressive geometry, purple/cyan dual-tone, good 
 
 ## 8. Versioning & Compatibility
 
-- Firmware that implements this contract reports modes 0–10 and accepts `B` / `V`.
-- App should degrade gracefully if an older firmware is detected (missing `B`/`V` lines in status).
+- Firmware that implements this contract reports modes 0–10, accepts `B` / `V`, and emits `STAT` lines.
+- App should degrade gracefully if an older firmware lacks `STAT` or `B`/`V` (fall back to `?`).
 - Future protocol additions will be additive; existing single-letter commands will not change meaning.
 
 ---
 
 *Contract maintained alongside DRAKE_2_0_TAIL firmware.*  
-*Questions or extensions → open an issue or update this file.*
+*System-wide docs: [SYSTEM.md](SYSTEM.md)*
