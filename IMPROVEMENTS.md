@@ -1,28 +1,37 @@
 # Drake 2.0 Improvements & Roadmap
 
-Status tracker. Detail: **[SYSTEM.md](SYSTEM.md)** · **[ESPNOW.md](ESPNOW.md)** · **[APP_INTERFACE.md](APP_INTERFACE.md)**
+**Firmware team status – July 2026**
 
-## Implemented (July 2026)
+Detail: [SYSTEM.md](SYSTEM.md) · [ESPNOW.md](ESPNOW.md) · [SETTINGS.md](SETTINGS.md) · [APP_INTERFACE.md](APP_INTERFACE.md)
 
-| Item | Notes |
-|------|-------|
-| BLE NUS (NimBLE) | Service UUID advertised |
-| Modes 0–10 | Tail + PAWB |
-| Brightness `B` + Speed `V` | NVS |
-| Binary mic (UDP) | Superseded as primary by ESP-NOW |
-| **Encrypted ESP-NOW** | Mic, cmds, light, temp Tail↔Head |
-| Head/Tail WiFi no-sleep | Done |
-| Live `STAT` to app | ~2 Hz |
-| PAWB mode follow | Modes 0–10 via ASK |
-| System + ESP-NOW docs | SYSTEM.md, ESPNOW.md |
+## Implemented
 
-## Open / next
+| Item | Boards | Notes |
+|------|--------|-------|
+| BLE NUS (NimBLE) | Tail | Service UUID advertised |
+| Modes **0–10 non-blocking** | **Tail + Head + PAWB** | Full parity |
+| Brightness `B` + Speed `V` | Tail | NVS |
+| Mic `S` + **Gate `G`** + **Gain `A`** + EMA | Tail | Shared `readMicLevel()` |
+| Encrypted ESP-NOW | Tail↔Head | Mic, cmds, sensors |
+| Fan `F*` / `FT*` + CDS `I*` / `D*` | Head via Tail | App Settings |
+| Live `STAT` | Tail→app | Includes G, A, HeadB, HeadT |
+| Docs for app + firmware | Tail repo | SETTINGS, SYSTEM, ESPNOW |
 
-1. Color / theme commands (`C`, `T`)  
-2. Head mode visual parity  
-3. Companion app  
-4. Prove ESP-NOW on-suit; then optional remove UDP fallback  
+## Open / next (priority)
+
+1. **Color command** `C` for Solid (and PAWB/Head sync)  
+2. Mic auto-calibrate / noise floor (optional)  
+3. Companion app build (app team; SETTINGS.md)  
+4. On-suit ESP-NOW validation → then trim UDP fallback  
+5. Remove unused blocking demos in Head `Other_modes.ino`  
+
+## Mode parity checklist
+
+- [x] Tail 0–10 non-blocking  
+- [x] PAWB 0–10 non-blocking  
+- [x] Head 0–10 non-blocking + CDS eyes  
+- [x] Mode broadcast M via ESP-NOW / UDP / ASK  
 
 ---
 
-*Update when features ship.*
+*Firmware team: treat SYSTEM.md §2 and §7 as the current contract.*

@@ -1,98 +1,141 @@
 # Drake 2.0 – System Documentation
 
 **Last updated:** July 2026  
-Related: [ESPNOW.md](ESPNOW.md) · [APP_INTERFACE.md](APP_INTERFACE.md)
+**Audience:** Firmware team + app team  
+Related: [ESPNOW.md](ESPNOW.md) · [APP_INTERFACE.md](APP_INTERFACE.md) · [SETTINGS.md](SETTINGS.md)
 
 ---
 
 ## 1. Hardware roles
 
-| Board | MCU | Role |
-|-------|-----|------|
-| **Tail** | ESP32 | Mic, BLE, ESP-NOW, ASK TX, modes |
-| **Head** | ESP8266 | SoftAP, ESP-NOW, eyes+spikes, **CDS**, **fan**, temp |
-| **PAWB** | Pro Mini | Claws, ASK RX |
+| Board | Repo | MCU | Role |
+|-------|------|-----|------|
+| **Tail** | `DRAKE_2_0_TAIL` | ESP32 | Mic, BLE, ESP-NOW, ASK TX, modes 0–10 |
+| **Head** | `DRAKE_2_0_HEAD` | ESP8266 | SoftAP ch2, ESP-NOW, modes 0–10, CDS eyes, fan, temp |
+| **PAWB** | `DRAKE_2_0_PAWB` | Pro Mini | Claws, ASK RX, modes 0–10 |
+
+```
+Phone (BLE) → Tail → ESP-NOW ↔ Head
+                ↓ ASK
+              PAWB claws
+```
 
 ---
 
-## 2. Head sensors (important)
+## 2. Lighting modes (0–10) — **full suit parity**
 
-### Temperature + fan
+All active paths are **non-blocking** (`millis()` gates, no `delay()` on the hot path).
 
-| Item | Detail |
-|------|--------|
-| Sensor | DS18B20-style OneWire on **D5** |
-| Fan pin | **D4** (HIGH = on) |
-| Default AUTO threshold | **85 °F** |
-| Modes | `F0` off · `F1` on · `F2` auto |
-| Set threshold | `FT<n>` (°F, 50–120) |
+| ID | Name | Tail | Head | PAWB |
+|----|------|:----:|:----:|:----:|
+| 0 | Sound Phase | ✅ | ✅ | ✅ |
+| 1 | Sound Distinct | ✅ | ✅ | ✅ |
+| 2 | VU Meter | ✅ | ✅ | ✅ |
+| 3 | Rainbow Chase | ✅ | ✅ | ✅ |
+| 4 | Comet | ✅ | ✅ | ✅ |
+| 5 | Breathing | ✅ | ✅ | ✅ |
+| 6 | Fire | ✅ | ✅ | ✅ |
+| 7 | Sparkle | ✅ | ✅ | ✅ |
+| 8 | Wave | ✅ | ✅ | ✅ |
+| 9 | Solid | ✅ | ✅ | ✅ |
+| 10 | Off | ✅ | ✅ | ✅ |
 
-In AUTO: fan runs when measured temp **>** threshold.
+### Behaviour rules
 
-### CDS photocell → eye brightness
+- Modes **0–1** (and Tail/PAWB sound path): mic-reactive; idle fade when quiet (after timeout).
+- Modes **2–10**: run **continuously** once selected.
+- Mode change: Tail broadcasts `M0`…`M9` / `MA` over **ESP-NOW + UDP + ASK**.
+- Head eyes (pixels **0–3**): after each frame, CDS dim is re-applied (`I` threshold, `D` percent).
 
-| Item | Detail |
-|------|--------|
-| Sensor | **CDS** (photocell) voltage divider on Head **A0** |
-| ADC range | ~0–1023 |
-| Eyes | NeoPixels **0–3** |
-| Logic | `dim_eyes = (sensorValue >= cdsThreshold)` |
-| Default threshold | **500** (`I500`) |
-| When dimmed | `eyesbrightness(eyeDimPercent/100)` — default **10%** (`D10`) |
-| When not dimmed | `eyesbrightness(1.0)` |
-| Live to app | `STAT` **`HeadB`** |
+### Source files
 
-**Intent:** In brighter ambient light (higher CDS reading with current wiring), eye LEDs automatically dim so the face doesn’t wash out. Calibrate `I` and `D` per suit if the CDS divider is different.
+| Board | Mode code |
+|-------|-----------|
+| Tail | `New_Modes.ino` (3–10), `sound_activate.ino` (0–1), `SoundCheck.ino` (2), `mode_selector` in main |
+| Head | `New_Modes.ino` (2–10 + selector), `sound_activate.ino` (0–1), `Background_loop.ino` (idle) |
+| PAWB | `New_Modes.ino` (full selector 0–10), `sound_activate.ino` (0–1) |
 
-Implemented in:
-- `checkLight()` — reads CDS, sets `dim_eyes`, sends `HeadB`
-- `soundloop()` / `eyes_led.ino` — applies eye pixel brightness
+**Legacy:** Head `Other_modes.ino` still has old blocking demos — **not** used by `mode_selector`. Do not call them from the main loop.
 
 ---
 
-## 3. Links
+## 3. Mic path (Tail)
+
+```text
+delta  = max(0, analogRead(A0) - OFFSET)   // OFFSET = 1600
+level  = delta * (micGain/100) + sensitivity
+smooth = EMA(level)
+wake   = smooth > micGate   // modes 0–1
+```
+
+| Setting | Cmd | Default | NVS |
+|---------|-----|---------|-----|
+| Sensitivity | `S` | 75 | yes |
+| Gate | `G` | 100 | yes |
+| Gain % | `A` | 100 | yes |
+| Sound enable | `E`/`e` | on | yes |
+
+Stream to Head: ESP-NOW type `0x01` (int16). Paws: ASK `m####`.
+
+---
+
+## 4. Head sensors
+
+### CDS → eyes
+- A0 photocell; `dim_eyes = (reading >= cdsThreshold)` (default 500).
+- Eyes use `eyeDimPercent` (default 10%) when dimmed.
+- App: `I<n>`, `D<n>`; live `STAT HeadB`.
+
+### Fan + temp
+- OneWire temp D5; fan D4.
+- `F0`/`F1`/`F2` + `FT<n>` (°F, default 85). Live `STAT HeadT`.
+
+---
+
+## 5. Links
 
 | Link | Medium |
 |------|--------|
-| Tail↔Head hot path | Encrypted **ESP-NOW** (mic, cmds, light, temp) |
-| Tail→PAWB | **ASK** 2000 baud pin 17 → A0 |
-| Phone→Tail | **BLE NUS** |
+| Tail↔Head | Encrypted ESP-NOW (mic, cmds, light, temp); UDP fallback |
+| Tail→PAWB | ASK 2000 baud, pin 17 → A0 |
+| Phone→Tail | BLE NUS |
 
-Head settings commands (`F*`, `I*`, `D*`) go Tail→Head only (not ASK).
-
----
-
-## 4. BLE commands (summary)
-
-Lighting: `M` `B` `V` `S` `E/e` `L` `R` `Z` `?`  
-Head: `F0` `F1` `F2` `FT<n>` `I<n>` `D<n>`
-
-Full app contract: [APP_INTERFACE.md](APP_INTERFACE.md)
+ESP-NOW details: [ESPNOW.md](ESPNOW.md) (peer MACs required on bench).
 
 ---
 
-## 5. Analog mic (Tail)
+## 6. BLE command summary
 
-```text
-level = analogRead(A0) - 1600 + sensitivity
-```
-
-OFFSET 1600 = mic preamp bias in ADC counts.
+`M B V S G A E/e L R Z ?` + Head `F0/F1/F2 FT I D`  
+Full contract: [APP_INTERFACE.md](APP_INTERFACE.md) · [SETTINGS.md](SETTINGS.md)
 
 ---
 
-## 6. Modes 0–10
+## 7. Firmware team – done vs backlog
 
-On Tail + PAWB. Head receives mode byte for sound-loop style.
+### Done
+- Modes 0–10 non-blocking on **Tail, Head, PAWB**
+- ESP-NOW encrypted Tail↔Head
+- Mic gain/gate/EMA on Tail
+- Fan + CDS app settings on Head
+- BLE STAT telemetry
+
+### Backlog (ideas, not blocking ship)
+- Color command `C<r>,<g>,<b>` for Solid mode sync
+- Auto-calibrate mic OFFSET / “silence” button
+- Drop UDP fallback once ESP-NOW proven on-suit
+- Delete or archive Head `Other_modes.ino` blocking demos
+- Optional ESP-NOW for more Head telemetry fields
 
 ---
 
-## 7. Bench notes
+## 8. Flash order
 
-1. Pair ESP-NOW MACs (see ESPNOW.md).  
-2. Test fan: `F1` / `F0` / `F2` + `FT80`.  
-3. Test CDS: cover/uncover photocell; watch `HeadB` and eye brightness; tune `I` / `D`.
+1. Head (modes + ESP-NOW)  
+2. Tail (set `HEAD_PEER_MAC`)  
+3. PAWB(s)  
+4. Confirm ESP-NOW ready; test `M3`–`M10` on all three
 
 ---
 
-*Keep in sync when Head sensor behaviour changes.*
+*Update this file when mode behaviour or board roles change.*
