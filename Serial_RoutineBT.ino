@@ -1,9 +1,6 @@
 /*
  * Serial_RoutineBT.ino  (NimBLE NUS)
- * Remote command interface over Nordic UART Service
- *
- * Commands that affect the Head are sent via encrypted ESP-NOW
- * (and still UDP + ASK where useful).
+ * Includes Head settings: fan mode/threshold, CDS eye-dim threshold/level
  */
 
 #include <NimBLEDevice.h>
@@ -57,12 +54,17 @@ void pushLiveStatus() {
   pTxCharacteristic->notify();
 }
 
-// Forward a short command to Head (ESP-NOW) + optional UDP + ASK
 void forwardCmd(const char *msg) {
   espnowSendCmd(msg);
-  udp.broadcastTo(msg, 1234);  // transitional fallback
+  udp.broadcastTo(msg, 1234);
   Ask_TX.send((uint8_t *)msg, strlen(msg));
   Ask_TX.waitPacketSent();
+}
+
+// Head-only settings (no ASK — paws don't use fan/CDS)
+void forwardHeadCmd(const char *msg) {
+  espnowSendCmd(msg);
+  udp.broadcastTo(msg, 1234);
 }
 
 void processBLECommand(const String& raw) {
@@ -130,6 +132,31 @@ void processBLECommand(const String& raw) {
         blePrintln("Speed=" + String(animSpeed));
         break;
       }
+    case 'F':
+      {
+        // F0=fan off  F1=fan on  F2=fan auto  |  FT85=threshold °F
+        String payload = cmd;
+        forwardHeadCmd(payload.c_str());
+        if (cmd.length() >= 2 && (cmd.charAt(1) == 'T' || cmd.charAt(1) == 't'))
+          blePrintln("Fan threshold forwarded: " + cmd);
+        else
+          blePrintln("Fan mode forwarded: " + cmd);
+        break;
+      }
+    case 'I':
+      {
+        // I<n> CDS threshold 0-1023
+        forwardHeadCmd(cmd.c_str());
+        blePrintln("CDS threshold forwarded: " + cmd);
+        break;
+      }
+    case 'D':
+      {
+        // D<n> eye dim percent when CDS active 1-100
+        forwardHeadCmd(cmd.c_str());
+        blePrintln("Eye dim % forwarded: " + cmd);
+        break;
+      }
     case 'R':
       {
         blePrintln("Resync...");
@@ -170,14 +197,11 @@ void processBLECommand(const String& raw) {
         String status;
         status += "**************************************\n";
         status += "Commands:\n";
-        status += "L - Flash\n";
-        status += "R - Resync\n";
-        status += "E/e - Sound on/off\n";
-        status += "M<0-10> - Mode\n";
-        status += "B<0-100> - Brightness\n";
-        status += "V<0-100> - Speed\n";
-        status += "S<value> - Sensitivity\n";
-        status += "Z - REBOOT\n";
+        status += "M B V S E/e L R Z\n";
+        status += "F0/F1/F2 - Fan off/on/auto\n";
+        status += "FT<temp> - Fan threshold F\n";
+        status += "I<0-1023> - CDS eye-dim threshold\n";
+        status += "D<1-100> - Eye dim percent\n";
         status += "**************************************\n";
         status += "M:" + String(mode) + "  B:" + String(masterBrightness) +
                   "  V:" + String(animSpeed) + "\n";
