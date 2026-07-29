@@ -11,5 +11,6 @@ Driver firmware running on suit tail.
 
 Planned to add: Accelerometer data. More other light patterns after converting them to non-blocking code.
 
-http://tmdrake.com
+**See [IMPROVEMENTS.md](IMPROVEMENTS.md) for the full roadmap** (BLE terminal, expanded modes, app tuning, latency optimizations, branded companion app).
 
+http://tmdrake.com
