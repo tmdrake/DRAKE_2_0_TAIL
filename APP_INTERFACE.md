@@ -1,150 +1,92 @@
 # TMDrake Companion App – Interface Contract
 
-**Version:** 1.2  
+**Version:** 1.3  
 **Date:** July 2026  
-**Hardware:** ESP32 Tail (`TMDrake_tail`) via BLE Nordic UART Service  
-**Architecture:** [SYSTEM.md](SYSTEM.md) · ESP-NOW: [ESPNOW.md](ESPNOW.md)
+**Settings detail:** [SETTINGS.md](SETTINGS.md)  
+**Architecture:** [SYSTEM.md](SYSTEM.md)
 
 ---
 
-## 1. Branding
-
-| Element | Spec |
-|---------|------|
-| App Name | **TMDrake** or **Drake Control** |
-| Primary | Deep purple `#4A1C6B`–`#7B2D8E` |
-| Accent | Cyan `#00C2FF` |
-| Background | Near-black `#0D0B14` |
-
----
-
-## 2. BLE (NUS)
+## BLE NUS
 
 | Role | UUID |
 |------|------|
 | Service | `6E400001-B5A3-F393-E0A9-E50E24DCCA9E` |
-| RX (app→suit) | `6E400002-B5A3-F393-E0A9-E50E24DCCA9E` |
-| TX (suit→app) | `6E400003-B5A3-F393-E0A9-E50E24DCCA9E` |
+| RX | `6E400002-B5A3-F393-E0A9-E50E24DCCA9E` |
+| TX | `6E400003-B5A3-F393-E0A9-E50E24DCCA9E` |
 
-Device name: `TMDrake_tail` · Plugin: `flutter_blue_plus` · Filter by service UUID.
-
----
-
-## 3. Command protocol (App → Tail RX)
-
-UTF-8 strings, no required terminator.
-
-### Lighting / suit (Tail + forward)
-
-| Command | Format | Description |
-|---------|--------|-------------|
-| Mode | `M<0-10>` | Lighting mode |
-| Brightness | `B<0-100>` | Master brightness % |
-| Speed | `V<0-100>` | Animation speed |
-| Sensitivity | `S<n>` | Mic sensitivity |
-| Sound | `E` / `e` | Sound detect on/off |
-| Flash | `L` | Flash |
-| Resync | `R` | Reset animations |
-| Reboot | `Z` | Reboot Tail |
-| Status | `?` | Help + dump |
-
-### Head settings (Settings menu) — **new**
-
-These are forwarded Tail → Head (ESP-NOW / UDP). **Not** sent to PAWB.
-
-| Command | Format | Range | Description |
-|---------|--------|-------|-------------|
-| Fan mode | `F0` | — | Force fan **OFF** |
-| Fan mode | `F1` | — | Force fan **ON** |
-| Fan mode | `F2` | — | Fan **AUTO** (by temperature) |
-| Fan threshold | `FT<n>` | 50–120 | AUTO fan ON when Head temp **> n °F** (default **85**) |
-| CDS threshold | `I<n>` | 0–1023 | When CDS reading **≥ n**, dim eyes (default **500**) |
-| Eye dim level | `D<n>` | 1–100 | Eye brightness **%** while dimmed (default **10**) |
-
-#### Settings UI recommendations
-
-- **Fan section**
-  - Segmented control / radio: Off · On · Auto
-  - Slider or stepper: “Fan on above ___ °F” (only enabled in Auto)
-  - Show live `HeadT` from `STAT`
-- **Eyes / ambient light section**
-  - Slider: “Dim eyes when light sensor ≥ ___” (`I`)
-  - Slider: “Dimmed eye brightness %” (`D`)
-  - Show live `HeadB` (CDS raw) from `STAT`
-  - Short help text: *CDS on the Head dims eye LEDs in bright ambient light.*
+Device: `TMDrake_tail` · Plugin: `flutter_blue_plus`
 
 ---
 
-## 4. CDS sensor & eye brightness (hardware behaviour)
+## Commands (App → RX)
 
-**Document this clearly in the app Settings help / about copy.**
+### Core
+| Cmd | Format | Notes |
+|-----|--------|-------|
+| Mode | `M<0-10>` | |
+| Brightness | `B<0-100>` | |
+| Speed | `V<0-100>` | |
+| Sensitivity | `S<n>` | Additive mic offset |
+| **Gate** | `G<n>` | Sound-mode wake threshold (default 100) |
+| **Gain** | `A<n>` | Mic gain % 50–300 (default 100) |
+| Sound | `E` / `e` | On / off |
+| Flash / Resync / Reboot | `L` / `R` / `Z` | |
+| Status | `?` | |
 
-| Item | Detail |
-|------|--------|
-| Sensor | **CDS photocell** (light-dependent resistor) on **Head A0** |
-| Eyes | NeoPixel indices **0–3** on the Head strip |
-| Spikes | Indices 4+ (not dimmed by CDS) |
-| Rule | `if (CDS_reading >= threshold) dim_eyes = true` |
-| Dimmed | Eyes drawn at `D/100` brightness (default 10%) |
-| Not dimmed | Eyes at full relative brightness (100%) |
-| Live value | `STAT` field **`HeadB`** = latest CDS reading |
-
-Typical use: in bright rooms / outdoor sun, eyes automatically dim so they don’t look blown-out; in darker spaces they stay bright.
-
-Threshold and dim % are tunable so different suits / CDS wiring can be calibrated without reflashing.
-
----
-
-## 5. Fan behaviour (Head)
-
-| Mode | Command | Behaviour |
-|------|---------|-----------|
-| Off | `F0` | Fan always off |
-| On | `F1` | Fan always on |
-| Auto | `F2` | Fan on when `HeadT > FT` threshold °F |
-
-Live temperature: `STAT` field **`HeadT`** (°F).
+### Head settings
+| Cmd | Format | Notes |
+|-----|--------|-------|
+| Fan | `F0` `F1` `F2` | Off / On / Auto |
+| Fan °F | `FT<n>` | AUTO threshold |
+| CDS threshold | `I<n>` | Dim eyes when light ≥ n |
+| Eye dim % | `D<n>` | 1–100 when dimmed |
 
 ---
 
-## 6. Status / telemetry (TX notify)
+## Mic behaviour (for app copy)
 
 ```text
-STAT M:3 B:80 V:50 S:75 E:1 Mic:1423 HeadB:512 HeadT:36.5
+level = max(0, ADC - 1600) * Gain/100 + Sensitivity
+→ EMA smooth → compare to Gate → drive modes / stream to Head
+```
+
+Live meter: `STAT Mic:`
+
+---
+
+## Telemetry
+
+```text
+STAT M:3 B:80 V:50 S:75 G:100 A:100 E:1 Mic:1423 HeadB:512 HeadT:86.2
 ```
 
 | Token | Meaning |
 |-------|--------|
-| `M` `B` `V` `S` `E` | Mode, brightness, speed, sensitivity, sound |
-| `Mic` | Tail mic level |
-| `HeadB` | **CDS light sensor** raw reading |
-| `HeadT` | Head temperature °F |
+| `S` | Sensitivity |
+| `G` | Gate |
+| `A` | Gain % |
+| `Mic` | Smoothed mic level |
+| `HeadB` | CDS light |
+| `HeadT` | Temp °F |
 
 ---
 
-## 7. App structure
+## Screens
 
-1. **Connect**
-2. **Control** — modes, B/V/S, flash, resync
-3. **Status** — Mic, HeadT, HeadB meters
-4. **Settings**
-   - Fan: mode + threshold
-   - Eyes / CDS: threshold + dim %
-   - About / branding
+1. Connect  
+2. Control — modes, B, V, L, R  
+3. Status — Mic, HeadT, HeadB  
+4. Settings — Sound (E, A, S, G), Fan, Eyes/CDS, System  
 
----
-
-## 8. Mode icons (0–10)
-
-Unchanged — see prior contract (Sound Phase … Off).
+See **SETTINGS.md** for full breakout and presets.
 
 ---
 
-## 9. Versioning
+## CDS / eyes (Head)
 
-- v1.2 adds `F*`, `FT*`, `I*`, `D*`.
-- Older firmware ignores unknown commands; app should tolerate missing behaviour.
+CDS on Head A0; when reading ≥ `I` threshold, eyes (pixels 0–3) use brightness `D`%. Document in Settings help.
 
 ---
 
-*Firmware is source of truth for protocol.*
+*v1.3 adds G (gate) and A (gain).*
