@@ -1,5 +1,6 @@
 /*
- * Serial_RoutineBT.ino – NimBLE NUS + Head settings + mic G/A
+ * Serial_RoutineBT.ino – NimBLE NUS
+ * Modes 0-10, mic S/G/A, Head F/I/D, solid color C
  */
 
 #include <NimBLEDevice.h>
@@ -150,6 +151,30 @@ void processBLECommand(const String& raw) {
         blePrintln("Speed=" + String(animSpeed));
         break;
       }
+    case 'C':
+      {
+        // C<r>,<g>,<b>  solid color 0-255 each — also sets mode 9
+        int r = 0, g = 0, b = 0;
+        int n = sscanf(cmd.c_str() + 1, "%d,%d,%d", &r, &g, &b);
+        if (n == 3) {
+          r = constrain(r, 0, 255);
+          g = constrain(g, 0, 255);
+          b = constrain(b, 0, 255);
+          setSolidColor((uint8_t)r, (uint8_t)g, (uint8_t)b);
+          mode = 9;
+          MODE.put(0, mode);
+          MODE.commit();
+          char msg[16];
+          snprintf(msg, sizeof(msg), "C%d,%d,%d", r, g, b);
+          forwardCmd(msg);
+          // also ensure mode 9 on peers
+          forwardCmd("M9");
+          blePrintln("Color=" + String(r) + "," + String(g) + "," + String(b) + " Mode=9");
+        } else {
+          blePrintln("Color format: C<r>,<g>,<b>");
+        }
+        break;
+      }
     case 'F':
       forwardHeadCmd(cmd.c_str());
       blePrintln("Fan cmd: " + cmd);
@@ -193,8 +218,9 @@ void processBLECommand(const String& raw) {
       {
         String status;
         status += "**************************************\n";
-        status += "M B V S G A E/e L R Z\n";
-        status += "S=sensitivity  G=gate  A=gain%\n";
+        status += "M0-10 modes (full suit)\n";
+        status += "B V S G A E/e L R Z\n";
+        status += "C<r>,<g>,<b> solid color\n";
         status += "F0/F1/F2 FT I D (Head)\n";
         status += "**************************************\n";
         status += "M:" + String(mode) + " B:" + String(masterBrightness) +
