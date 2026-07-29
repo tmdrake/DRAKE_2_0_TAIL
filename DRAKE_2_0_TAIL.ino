@@ -1,149 +1,132 @@
 /*
  * Based On the Node32S - 4MB flash/NO-OTA! LARGE APP NEEDED. FLASH-ROM at 40Mhz.
- * Board version 2.0.17 (only works for now 12-29-2024)
+ * Board version 2.0.17
  *
  * Updated July 2026:
- *   - Classic Bluetooth SPP replaced with NimBLE Nordic UART Service (NUS)
- *   - Requires NimBLE-Arduino library (Library Manager -> "NimBLE-Arduino")
- *   - Device advertises as "TMDrake_tail" with NUS service UUID
- *   - Modes 0-10 implemented (sound reactive + new visual modes)
+ *   - NimBLE Nordic UART Service (NUS)
+ *   - Modes 0-10
+ *   - Master brightness (B) + animation speed (V)
  */
 #if !defined(ESP32)
 #error This code is designed to run on ESP32 and ESP32-based boards! Please check your Tools->Board setting.
 #endif
 
 #include <esp_task_wdt.h>
-#define WDT_TIMEOUT 30  // Timeout in seconds
+#define WDT_TIMEOUT 30
 
-#define LED_PIN 22  //Where our driver is connected to..
+#define LED_PIN 22
 #include <Adafruit_NeoPixel.h>
 Adafruit_NeoPixel spikes(12, LED_PIN, NEO_GRB + NEO_KHZ800);
 #define MIC A0
-#define OFFSET 1600       //Voltage offset for zero point on mic Input
-#define MAXBRIGHTNESS 75  //For background loop [0-100%]
-//#define DEBUG_MIC         /* Uncomment to Debug Mic*/
+#define OFFSET 1600
+#define MAXBRIGHTNESS 75
+//#define DEBUG_MIC
 
 #include <Timer.h>
 Timer t;
 
-
-////For Coms to ->Pawbs
-#define TRANSMITTER 17  //Where the ASK RF modules is attached
+#define TRANSMITTER 17
 #include <RH_ASK.h>
 #ifdef RH_HAVE_HARDWARE_SPI
-#include <SPI.h>  // Not actually used but needed to compile
+#include <SPI.h>
 #endif
-RH_ASK Ask_TX(2000, 0, TRANSMITTER, 0);  // ESP8266 or ESP32: do not use pin 11 or 2
+RH_ASK Ask_TX(2000, 0, TRANSMITTER, 0);
 
-
-//WIFI Client
 #include "WiFi.h"
 #include "AsyncUDP.h"
 const char* ssid = "TMDRAKE";
-//const char * password = "***********";
-IPAddress ip(192, 168, 4, 10);  //Local IP so we dont
+IPAddress ip(192, 168, 4, 10);
 IPAddress gateway(192, 168, 4, 1);
 IPAddress subnet(255, 255, 255, 0);
 AsyncUDP udp;
 AsyncUDP udp_head_temp;
 AsyncUDP udp_head_light;
-////////////////////////////////////////////
 
-
-//switch between sound mode when loud sound is herd
 boolean soundmode = false;
 unsigned long lastime = 0;
 bool flashed = false;
 unsigned long lastmiclevel = -1;
 int head_brightness = -1;
 float head_temperature = -1;
-//////////////
 
-//Settings varables................................
-int sensitivity = 75;  //Default Value
+// Settings
+int sensitivity = 75;
 int mode = 0;
-int lastMode = -1;     // track mode changes for clean restart
-bool enableSound = true;  //Disables sound//Controls detection of sound
-/////////////////////////////////////////////////////
+int lastMode = -1;
+bool enableSound = true;
+int masterBrightness = 80;   // 0-100 %
+int animSpeed = 50;          // 0-100 (50 = normal)
 
-//FOR SAVING SETTINGS
 #include <EEPROM.h>
 #define EEPROM_SIZE 8
 EEPROMClass MODE("M");
 EEPROMClass SENSITIVITY("S");
 EEPROMClass ENABLESOUND("E");
-//Might use eppromEX to store everything from a construct
+EEPROMClass BRIGHTNESS("B");
+EEPROMClass SPEED("V");
 
-// BLE is now handled in Serial_RoutineBT.ino (NimBLE NUS)
-// No more BluetoothSerial / Classic SPP
+void applyMasterBrightness() {
+  // NeoPixel brightness is 0-255
+  uint8_t scaled = map(constrain(masterBrightness, 0, 100), 0, 100, 0, 255);
+  spikes.setBrightness(scaled);
+  spikes.show();
+}
 
 void setup() {
-  // put your setup code here, to run once:
-
-  //Init ASK Transmitter
   pinMode(TRANSMITTER, OUTPUT);
   Ask_TX.init();
 
-  //Init LED Pin
   pinMode(LED_BUILTIN, OUTPUT);
   pinMode(MIC, INPUT);
 
-  //Neopixel Library init
-  spikes.begin();  // INITIALIZE NeoPixel spikes object (REQUIRED)
-  spikes.show();   // Turn OFF all pixels ASAP
+  spikes.begin();
+  spikes.show();
 
   Serial.begin(115200);
   Serial.println(__FILE__);
   Serial.println(__DATE__);
   Serial.println(__TIME__);
-  Serial.println("Drake Tail....GO! (NimBLE NUS + Modes 0-10)");
+  Serial.println("Drake Tail....GO! (NimBLE + Modes + Brightness/Speed)");
 
-  //Init WIFI (with static ip for direct communication)
   WiFi.mode(WIFI_STA);
-  WiFi.setSleep(false);          // Disable power-save for lower latency
+  WiFi.setSleep(false);
   WiFi.begin(ssid, NULL);
   WiFi.config(ip, gateway, subnet);
 
-  //RESTORE EEPROM
   Serial.println("Restoring settings..");
   if (MODE.begin(EEPROM_SIZE)) {
     MODE.get(0, mode);
-    if (mode < 0 || mode > 10) {
-      mode = 0;
-      MODE.put(0, mode);
-      MODE.commit();
-    }
-    Serial.print("M:");
-    Serial.println(mode);
+    if (mode < 0 || mode > 10) { mode = 0; MODE.put(0, mode); MODE.commit(); }
+    Serial.print("M:"); Serial.println(mode);
   }
   if (SENSITIVITY.begin(EEPROM_SIZE)) {
     SENSITIVITY.get(0, sensitivity);
-    if (sensitivity < 0 || sensitivity > 4000) {
-      sensitivity = 75;
-      SENSITIVITY.put(0, sensitivity);
-      SENSITIVITY.commit();
-    }
-    Serial.print("S:");
-    Serial.println(sensitivity);
+    if (sensitivity < 0 || sensitivity > 4000) { sensitivity = 75; SENSITIVITY.put(0, sensitivity); SENSITIVITY.commit(); }
+    Serial.print("S:"); Serial.println(sensitivity);
   }
   if (ENABLESOUND.begin(EEPROM_SIZE)) {
     ENABLESOUND.get(0, enableSound);
-    if (enableSound < 0 || enableSound > 1) {
-      enableSound = true;
-      ENABLESOUND.put(0, enableSound);
-      ENABLESOUND.commit();
-    }
-    Serial.print("E:");
-    Serial.println(enableSound);
+    if (enableSound < 0 || enableSound > 1) { enableSound = true; ENABLESOUND.put(0, enableSound); ENABLESOUND.commit(); }
+    Serial.print("E:"); Serial.println(enableSound);
+  }
+  if (BRIGHTNESS.begin(EEPROM_SIZE)) {
+    BRIGHTNESS.get(0, masterBrightness);
+    if (masterBrightness < 0 || masterBrightness > 100) { masterBrightness = 80; BRIGHTNESS.put(0, masterBrightness); BRIGHTNESS.commit(); }
+    Serial.print("B:"); Serial.println(masterBrightness);
+  }
+  if (SPEED.begin(EEPROM_SIZE)) {
+    SPEED.get(0, animSpeed);
+    if (animSpeed < 0 || animSpeed > 100) { animSpeed = 50; SPEED.put(0, animSpeed); SPEED.commit(); }
+    Serial.print("V:"); Serial.println(animSpeed);
   }
 
-  // Start NimBLE Nordic UART Service (defined in Serial_RoutineBT.ino)
+  applyMasterBrightness();
+
   setupBLE();
 
   esp_task_wdt_init(WDT_TIMEOUT * 1000, true);
   enableLoopWDT();
 
-  /**************************************/
   if (udp_head_light.listen(1235)) {
     udp_head_light.onPacket([](AsyncUDPPacket packet) {
       head_brightness = packet.parseInt();
@@ -159,30 +142,20 @@ void setup() {
 }
 
 void loop() {
-  //Update Timer
-  t.update();  //for flash and other async task
+  t.update();
 
   if (!flashed) {
-    //Sound Activation (modes 0-2) or continuous visual modes (3-10)
     sound_detect();
   }
-
-  /* BLE is event-driven via NimBLE callbacks - no polling needed */
 }
 
-
-
 void sound_detect() {
-  // Modes 3-10 run continuously (they are pure visual)
-  // Modes 0-2 are sound-reactive and only run while soundmode is active
-
   if (mode >= 3 && mode <= 10) {
     mode_selector(mode);
     digitalWrite(LED_BUILTIN, LOW);
     return;
   }
 
-  // Original sound-reactive behaviour for modes 0-2
   if (soundmode && enableSound) {
     mode_selector(mode);
     digitalWrite(LED_BUILTIN, HIGH);
@@ -197,7 +170,6 @@ void sound_detect() {
     lastmiclevel = 0;
   }
 
-  // Check for Sound!
   long micLevel = analogRead(MIC) - OFFSET;
   if (micLevel > 100) {
     soundmode = true;
@@ -205,14 +177,12 @@ void sound_detect() {
   }
 }
 
-
 void flash_lamp() {
   turn_all_on();
   t.after(100, turn_all_off);
   flashed = true;
 }
 
-//Below are routines to save code
 void turn_all_off() {
   for (uint16_t i = 0; i < spikes.numPixels(); i++)
     spikes.setPixelColor(i, spikes.Color(0, 0, 0));
@@ -227,48 +197,23 @@ void turn_all_on() {
 }
 
 void mode_selector(int m) {
-  // Restart animation state when mode changes
   if (m != lastMode) {
     resetModeState();
     lastMode = m;
   }
 
   switch (m) {
-    case 0:
-      soundloop(millis(), 50, false);   // Sound Phase
-      break;
-    case 1:
-      soundloop(millis(), 50, true);    // Sound Distinct
-      break;
-    case 2:
-      soundcheck();                     // VU Meter
-      break;
-    case 3:
-      mode_rainbow_chase();             // Rainbow Chase
-      break;
-    case 4:
-      mode_comet();                     // Comet / Meteor
-      break;
-    case 5:
-      mode_breathing();                 // Breathing Pulse
-      break;
-    case 6:
-      mode_fire();                      // Fire Flicker
-      break;
-    case 7:
-      mode_sparkle();                   // Sparkle / Twinkle
-      break;
-    case 8:
-      mode_wave();                      // Wave / Undulate
-      break;
-    case 9:
-      mode_solid();                     // Solid / Static
-      break;
-    case 10:
-      mode_off();                       // Off / Blackout
-      break;
-    default:
-      mode = 0;
-      break;
+    case 0:  soundloop(millis(), 50, false); break;
+    case 1:  soundloop(millis(), 50, true);  break;
+    case 2:  soundcheck();                  break;
+    case 3:  mode_rainbow_chase();           break;
+    case 4:  mode_comet();                   break;
+    case 5:  mode_breathing();               break;
+    case 6:  mode_fire();                    break;
+    case 7:  mode_sparkle();                 break;
+    case 8:  mode_wave();                    break;
+    case 9:  mode_solid();                   break;
+    case 10: mode_off();                     break;
+    default: mode = 0;                       break;
   }
 }
