@@ -1,42 +1,43 @@
 # App Team – What you can implement now
 
-**Firmware updated July 2026 for issue #6 (C + T).**
+**Firmware July 2026 · Contract v1.6**
 
-## Fully supported (wire to UI, no longer optimistic)
+## Heartbeat (do this)
 
-| Feature | Command | Notes |
-|---------|---------|-------|
-| Modes 0–10 | `M0`–`M10` | Whole suit |
-| Brightness / Speed | `B` / `V` | |
-| Mic S / G / A | `S` `G` `A` | + live Mic meter |
-| Sound toggle | `E` / `e` | |
-| **Custom RGB** | `C<r>,<g>,<b>` | → mode 9, persisted |
-| **Themes** | `T0`–`T4` or `Tpurple`… | → mode 9, persisted |
-| Flash / Resync / Reboot | `L` `R` `Z` | |
-| Fan | `F0` `F1` `F2` `FT` | |
-| Eyes / CDS | `I` `D` | |
-| Live STAT | includes `C:` and `T:` | sync picker after connect |
+```text
+App  --HB-->  Tail
+App  <--HBACK Seq:n U:sec--
+App  <--STAT … full snapshot--
+```
 
-### Theme circles → send
+- Send **`HB`** every **2–5 s** while connected  
+- Send **`HB`** once right after notify subscription  
+- On **`HBACK`**: link OK  
+- On **`STAT`**: sync **all** UI (mode, B/V, mic, color, theme, HeadT/B)  
+- If no `HBACK` for **>10 s**: show reconnect banner  
 
-| Circle | Command |
-|--------|---------|
-| Purple | `T0` or `Tpurple` |
-| Fire | `T1` or `Tfire` |
-| Ice | `T2` or `Tice` |
-| Gold | `T3` or `Tgold` |
-| Emerald | `T4` or `Temerald` |
-| Custom HSV | `C<r>,<g>,<b>` |
+This is the supported path for **reliable data sync** after backgrounding or missed notifies.
 
-After connect, parse `STAT` `C:r,g,b` and `T:n` to restore the picker.
+## Fully supported UI
 
-## Still firmware backlog (optional later)
+| Feature | Command |
+|---------|---------|
+| Modes 0–10 | `M0`–`M10` |
+| Brightness / Speed | `B` / `V` |
+| Mic S/G/A + toggle | `S` `G` `A` `E`/`e` |
+| Color / themes | `C<r>,<g>,<b>` · `T0`–`T4` / names |
+| **Heartbeat** | **`HB`** |
+| Flash / Resync / Reboot | `L` `R` `Z` |
+| Fan / Eyes | `F*` `FT` `I` `D` |
 
-- Mic auto-calibrate / decay knobs  
-- User presets `P` / `W`  
-- Flash duration  
-- Per-mode color tint beyond Solid  
+## Theme circles
 
-## Screens
+`T0`/`Tpurple` · `T1`/`Tfire` · `T2`/`Tice` · `T3`/`Tgold` · `T4`/`Temerald` · custom `C…`
 
-Control · Status · Settings — as in your v0.2 README. Contract: [APP_INTERFACE.md](APP_INTERFACE.md) v1.5.
+## STAT tokens to parse
+
+`M B V S G A E C T Mic HeadB HeadT U Seq`
+
+---
+
+[APP_INTERFACE.md](APP_INTERFACE.md) is source of truth.

@@ -1,6 +1,6 @@
 /*
  * Serial_RoutineBT.ino – NimBLE NUS
- * Includes C (RGB) + T (themes) for app color UI
+ * C/T color + HB heartbeat for app data sync
  */
 
 #include <NimBLEDevice.h>
@@ -13,6 +13,9 @@ NimBLECharacteristic* pTxCharacteristic = nullptr;
 NimBLEServer* pServer = nullptr;
 bool deviceConnected = false;
 
+unsigned long lastAppHbMs = 0;   // last HB from app
+uint32_t hbSeq = 0;              // increments each HB reply
+
 void blePrint(const String& msg) {
   if (pTxCharacteristic && deviceConnected) {
     pTxCharacteristic->setValue(msg.c_str());
@@ -24,12 +27,8 @@ void blePrint(const String& msg) {
 
 void blePrintln(const String& msg) { blePrint(msg + "\n"); }
 
-void pushLiveStatus() {
-  if (!deviceConnected || !pTxCharacteristic) return;
-  static unsigned long lastPush = 0;
-  if (millis() - lastPush < 500) return;
-  lastPush = millis();
-
+/* Shared STAT builder — used by periodic push and HB sync */
+String buildStatLine() {
   String s = "STAT M:";
   s += mode;
   s += " B:"; s += masterBrightness;
@@ -43,9 +42,29 @@ void pushLiveStatus() {
   s += " Mic:"; s += lastmiclevel;
   s += " HeadB:"; s += head_brightness;
   s += " HeadT:"; s += head_temperature;
+  s += " U:"; s += (millis() / 1000UL);   // uptime seconds
+  s += " Seq:"; s += hbSeq;
+  return s;
+}
 
+void pushLiveStatus() {
+  if (!deviceConnected || !pTxCharacteristic) return;
+  static unsigned long lastPush = 0;
+  if (millis() - lastPush < 500) return;
+  lastPush = millis();
+
+  String s = buildStatLine();
   pTxCharacteristic->setValue(s.c_str());
   pTxCharacteristic->notify();
+}
+
+/* Immediate full sync for app heartbeat */
+void replyHeartbeat() {
+  lastAppHbMs = millis();
+  hbSeq++;
+  // Compact ACK then full snapshot (app can key off either)
+  blePrintln("HBACK Seq:" + String(hbSeq) + " U:" + String(millis() / 1000UL));
+  blePrint(buildStatLine());
 }
 
 void forwardCmd(const char *msg) {
@@ -60,7 +79,6 @@ void forwardHeadCmd(const char *msg) {
   udp.broadcastTo(msg, 1234);
 }
 
-// Apply RGB, mode 9, persist, fan-out to Head/PAWB
 void applySolidAndBroadcast(uint8_t r, uint8_t g, uint8_t b) {
   setSolidColor(r, g, b);
   saveSolidColor();
@@ -73,18 +91,17 @@ void applySolidAndBroadcast(uint8_t r, uint8_t g, uint8_t b) {
   forwardCmd("M9");
 }
 
-// Themes: numeric T0-T4 or named Tpurple/Tfire/Tice/Tgold/Temerald
 bool applyTheme(const String& arg) {
   String a = arg;
   a.toLowerCase();
   uint8_t r = solidR, g = solidG, b = solidB;
   int id = -1;
 
-  if (a == "0" || a == "purple")      { r = 157; g = 78;  b = 221; id = 0; }
-  else if (a == "1" || a == "fire")   { r = 255; g = 60;  b = 0;   id = 1; }
-  else if (a == "2" || a == "ice")    { r = 80;  g = 180; b = 255; id = 2; }
-  else if (a == "3" || a == "gold")   { r = 255; g = 180; b = 40;  id = 3; }
-  else if (a == "4" || a == "emerald"){ r = 20;  g = 200; b = 100; id = 4; }
+  if (a == "0" || a == "purple")       { r = 157; g = 78;  b = 221; id = 0; }
+  else if (a == "1" || a == "fire")    { r = 255; g = 60;  b = 0;   id = 1; }
+  else if (a == "2" || a == "ice")     { r = 80;  g = 180; b = 255; id = 2; }
+  else if (a == "3" || a == "gold")    { r = 255; g = 180; b = 40;  id = 3; }
+  else if (a == "4" || a == "emerald") { r = 20;  g = 200; b = 100; id = 4; }
   else return false;
 
   themeId = id;
@@ -97,6 +114,15 @@ void processBLECommand(const String& raw) {
   String cmd = raw;
   cmd.trim();
   if (cmd.length() == 0) return;
+
+  // Multi-char commands first
+  String upper = cmd;
+  upper.toUpperCase();
+  if (upper == "HB" || upper.startsWith("HB ") || upper.startsWith("HB:")) {
+    replyHeartbeat();
+    return;
+  }
+
   char inByte = cmd.charAt(0);
 
   switch (inByte) {
@@ -167,7 +193,7 @@ void processBLECommand(const String& raw) {
         r = constrain(r, 0, 255);
         g = constrain(g, 0, 255);
         b = constrain(b, 0, 255);
-        themeId = -1; // custom
+        themeId = -1;
         applySolidAndBroadcast((uint8_t)r, (uint8_t)g, (uint8_t)b);
         blePrintln("Color=" + String(r) + "," + String(g) + "," + String(b) + " Mode=9");
       } else {
@@ -178,11 +204,10 @@ void processBLECommand(const String& raw) {
     case 'T': {
       String arg = cmd.substring(1);
       arg.trim();
-      if (applyTheme(arg)) {
+      if (applyTheme(arg))
         blePrintln("Theme=" + arg + " Mode=9");
-      } else {
+      else
         blePrintln("Themes: T0/Tpurple T1/Tfire T2/Tice T3/Tgold T4/Temerald");
-      }
       break;
     }
     case 'F':
@@ -222,15 +247,9 @@ void processBLECommand(const String& raw) {
     case '?':
     default: {
       String status;
-      status += "M0-10 B V S G A E/e C r,g,b T0-4 L R Z\n";
+      status += "Cmds: M B V S G A E/e C T HB L R Z\n";
       status += "F0/F1/F2 FT I D (Head)\n";
-      status += "M:" + String(mode) + " B:" + String(masterBrightness) +
-                " V:" + String(animSpeed) + "\n";
-      status += "C:" + String(solidR) + "," + String(solidG) + "," + String(solidB) +
-                " T:" + String(themeId) + "\n";
-      status += "Mic:" + String(lastmiclevel) +
-                " HeadB:" + String(head_brightness) +
-                " HeadT:" + String(head_temperature) + "\n";
+      status += buildStatLine() + "\n";
       blePrint(status);
       break;
     }
@@ -240,6 +259,7 @@ void processBLECommand(const String& raw) {
 class ServerCallbacks : public NimBLEServerCallbacks {
   void onConnect(NimBLEServer* pServer) {
     deviceConnected = true;
+    lastAppHbMs = millis();
     Serial.println("BLE client connected");
   }
   void onDisconnect(NimBLEServer* pServer) {
