@@ -1,108 +1,42 @@
-# TMDrake App Team – Modes & Settings Brief
+# App Team – What you can implement now
 
-**Date:** July 2026 · **Contract version:** 1.4  
-**Read with:** [APP_INTERFACE.md](APP_INTERFACE.md) · [SETTINGS.md](SETTINGS.md)
+**Firmware updated July 2026 for issue #6 (C + T).**
 
----
+## Fully supported (wire to UI, no longer optimistic)
 
-## Suit behaviour you can rely on
-
-One BLE connection to **`TMDrake_tail`**. Tail fans out to **Head** (ESP-NOW) and **PAWB claws** (ASK).
-
-**Modes 0–10 run on the entire suit** (Tail + Head + claws). All non-blocking on firmware.
-
-| ID | Name | UI hint |
-|----|------|---------|
-| 0 | Sound Phase | Soft color-phase sound reactive |
-| 1 | Sound Distinct | Hard color steps sound reactive |
-| 2 | VU Meter | Bar graph |
-| 3 | Rainbow Chase | Flowing rainbow |
-| 4 | Comet | Bright head + trail |
-| 5 | Breathing | Pulse + hue |
-| 6 | Fire | Heat flicker |
-| 7 | Sparkle | Twinkles |
-| 8 | Wave | Traveling wave |
-| 9 | Solid | Static color (picker + `C`) |
-| 10 | Off | Blackout |
-
-- **0–1:** need mic activity (and Sound reactive ON).  
-- **2–10:** continuous once selected.  
-- Command: `M0` … `M10`.
-
----
-
-## Commands to implement
-
-### Control screen
-| Control | Command |
-|---------|---------|
-| Mode grid | `M<0-10>` |
-| Brightness | `B<0-100>` |
-| Speed | `V<0-100>` |
-| Flash | `L` |
-| Resync | `R` |
-| Solid color picker | `C<r>,<g>,<b>` then show mode 9 |
-
-`C150,0,255` sets RGB, switches suit to **Solid (9)**, syncs Head + paws.
-
-### Settings – Sound
-| Control | Command | Notes |
+| Feature | Command | Notes |
 |---------|---------|-------|
-| Sound reactive | `E` / `e` | |
-| Gain % | `A<50-300>` | Default 100 |
-| Sensitivity | `S<n>` | Default 75; UI 0–500 |
-| Gate | `G<n>` | Wake threshold; default 100 |
-| Mic meter | `STAT Mic:` | Live |
+| Modes 0–10 | `M0`–`M10` | Whole suit |
+| Brightness / Speed | `B` / `V` | |
+| Mic S / G / A | `S` `G` `A` | + live Mic meter |
+| Sound toggle | `E` / `e` | |
+| **Custom RGB** | `C<r>,<g>,<b>` | → mode 9, persisted |
+| **Themes** | `T0`–`T4` or `Tpurple`… | → mode 9, persisted |
+| Flash / Resync / Reboot | `L` `R` `Z` | |
+| Fan | `F0` `F1` `F2` `FT` | |
+| Eyes / CDS | `I` `D` | |
+| Live STAT | includes `C:` and `T:` | sync picker after connect |
 
-### Settings – Fan (Head)
-| Control | Command |
-|---------|---------|
-| Off / On / Auto | `F0` / `F1` / `F2` |
-| Threshold °F | `FT<50-120>` |
-| Temp meter | `STAT HeadT:` |
+### Theme circles → send
 
-### Settings – Eyes / light (Head)
-| Control | Command |
-|---------|---------|
-| Dim when light ≥ | `I<0-1023>` |
-| Dimmed eye % | `D<1-100>` |
-| Light meter | `STAT HeadB:` |
+| Circle | Command |
+|--------|---------|
+| Purple | `T0` or `Tpurple` |
+| Fire | `T1` or `Tfire` |
+| Ice | `T2` or `Tice` |
+| Gold | `T3` or `Tgold` |
+| Emerald | `T4` or `Temerald` |
+| Custom HSV | `C<r>,<g>,<b>` |
 
-CDS dims **eye LEDs only** in bright ambient light.
+After connect, parse `STAT` `C:r,g,b` and `T:n` to restore the picker.
 
----
+## Still firmware backlog (optional later)
 
-## Live telemetry
+- Mic auto-calibrate / decay knobs  
+- User presets `P` / `W`  
+- Flash duration  
+- Per-mode color tint beyond Solid  
 
-```text
-STAT M:3 B:80 V:50 S:75 G:100 A:100 E:1 Mic:1423 HeadB:512 HeadT:86.2
-```
+## Screens
 
-Sync UI from `STAT` after connect (~2 Hz).
-
----
-
-## Suggested UI structure
-
-1. **Connect** – scan NUS UUID / `TMDrake_tail`  
-2. **Control** – mode icons 0–10, B, V, color chip (Solid), L, R  
-3. **Status** – Mic, HeadT, HeadB  
-4. **Settings** – Sound (E,A,S,G), Fan, Eyes/CDS, About  
-
-### Mode icon set (required)
-Eleven mode icons + Flash, Resync, Bluetooth, Settings, dragon mark. Dark purple / cyan theme.
-
----
-
-## What firmware already does (don’t re-solve in app)
-
-- Mode fan-out to Head + paws  
-- Mic gain/gate/EMA  
-- Fan + CDS on Head  
-- Encrypted ESP-NOW Tail↔Head  
-
-App only talks BLE to Tail.
-
----
-
-*Firmware source of truth: Tail repo. Questions → SYSTEM.md / FIRMWARE_NOTES.md.*
+Control · Status · Settings — as in your v0.2 README. Contract: [APP_INTERFACE.md](APP_INTERFACE.md) v1.5.
