@@ -1,0 +1,45 @@
+# Drake repos: source + markdown only — no binary artifacts
+
+# Documents / images / firmware blobs
+*.pdf
+*.PDF
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.webp
+*.ico
+*.bmp
+*.svg
+*.bin
+*.elf
+*.hex
+*.apk
+*.aab
+*.zip
+*.7z
+*.rar
+*.tar
+*.gz
+*.woff
+*.woff2
+*.ttf
+*.otf
+
+# Build / IDE
+build/
+.pio/
+.vscode/
+.idea/
+*.o
+*.a
+*.so
+*.dylib
+*.exe
+.DS_Store
+Thumbs.db
+
+# Local secrets / keys (never commit)
+*secrets*
+*.pem
+*.key
