@@ -14,6 +14,16 @@ Related: [ESPNOW.md](ESPNOW.md) · [APP_INTERFACE.md](APP_INTERFACE.md) · [SETT
 | **Head** | `DRAKE_2_0_HEAD` | ESP8266 | SoftAP ch2, ESP-NOW, modes 0–10, CDS eyes, fan, temp |
 | **PAWB** | `DRAKE_2_0_PAWB` | Pro Mini | Claws, ASK RX, modes 0–10 |
 
+### Mode persistence (all regions)
+
+| Board | Storage | When saved | Boot |
+|-------|---------|------------|------|
+| **Tail** | NVS (`MODE`) | BLE `M*` / solid / theme | Restores last mode |
+| **Head** | EEPROM addr 0 | ESP-NOW/UDP `M*` / `C` / phase mode | Restores last mode |
+| **PAWB** | EEPROM addr 0 | ASK `M*` / `C` | Restores last mode |
+
+Tail remains the hub and re-pushes mode on suit sync; each region also keeps its own last mode if powered alone.
+
 ```
 Phone (BLE) → Tail → ESP-NOW ↔ Head
                 ↓ ASK
