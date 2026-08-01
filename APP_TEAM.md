@@ -1,119 +1,121 @@
-# App Team – Requirements & What You Can Implement
+# App Team – Requirements & Implementation Guide
 
-**Firmware contract:** [APP_INTERFACE.md](APP_INTERFACE.md) **v1.6**  
-**Date:** July 2026  
+**Firmware contract:** [APP_INTERFACE.md](APP_INTERFACE.md) **v2.0** (August 2026)  
 **Audience:** Companion app (Flutter / Android first)
 
+Wire format and ranges live in **APP_INTERFACE.md**. This file is the **product / engineering checklist**.
+
 ---
 
-## REQUIRED: BLE Link Service + Heartbeat
+## REQUIRED: BLE link service + heartbeat
 
-The suit must stay linked without the user hammering Connect. Treat this as a **product requirement**, not optional polish.
-
-### Architecture
+Treat “stay linked” as a **product requirement**.
 
 ```text
-Android foreground service (while “Keep suit linked” is ON)
-  → autoConnect to TMDrake_tail (NUS UUID)
+Android foreground service (“Keep suit linked” ON)
+  → discover / autoConnect TMDrake_tail (NUS UUID)
   → subscribe TX notify
-  → HB every 2–5 s + HB once on subscribe / resume
-  → HBACK = link healthy
-  → STAT = full UI sync
-  → no HBACK >10 s → disconnect + autoConnect / rescan
+  → HB on subscribe + every 2–5 s
+  → HBACK = healthy; STAT = full UI sync
+  → no HBACK >10 s → STALE → reconnect
 ```
 
-### Must implement
-
-| # | Requirement | Detail |
-|---|-------------|--------|
-| 1 | **Foreground service** | Android notification while link mode is enabled (“TMDrake linked” / “Searching…”) so BLE is not killed in background |
-| 2 | **autoConnect** | After first successful connect, store device id; reconnect with `autoConnect: true` (flutter_blue_plus) |
-| 3 | **Discovery** | Filter by NUS service UUID `6E400001-B5A3-F393-E0A9-E50E24DCCA9E` and/or name `TMDrake_tail` |
-| 4 | **HB on link up** | Send `HB` immediately after notify subscription |
-| 5 | **HB timer** | Send `HB` every **2–5 seconds** while connected |
-| 6 | **HBACK handling** | Reset stale timer; mark link healthy |
-| 7 | **STAT handling** | Parse **all** tokens and sync UI (mode, B/V, mic, color, theme, HeadT/B, U, Seq) |
-| 8 | **Stale / reconnect** | No `HBACK` for **>10 s** → show weak-link UI, disconnect, then autoConnect or rescan |
-| 9 | **Resume** | App/service resume from background → send `HB` once for full resync |
-| 10 | **User off switch** | “Keep suit linked” OFF → stop timer, disconnect, stop foreground service |
-
-### Protocol (firmware already live)
-
-```text
-App  --HB-->  Tail
-App  <--HBACK Seq:n U:uptimeSec--
-App  <--STAT M:… B:… C:r,g,b T:… Mic:… HeadB:… HeadT:… U:… Seq:…--
-```
-
-- Unsolicited `STAT` ~2 Hz continues while connected; **HB forces bidirectional proof + immediate snapshot**.
-- `Seq` increments each HB — use to detect gaps if desired.
-
-### Suggested link states
-
-```text
-OFF → SCANNING → CONNECTING → LINKED → STALE → (retry CONNECTING)
-```
-
-### Permissions (Android)
-
-Bluetooth connect/scan (and legacy location only if required by target SDK), **notifications** for the foreground service. Document for the user why the persistent notification exists.
-
-iOS: background BLE is more limited; Android-first is the target.
+| # | Requirement |
+|---|-------------|
+| 1 | Foreground service + notification while link enabled |
+| 2 | `autoConnect: true` after first successful pair (store device id) |
+| 3 | Filter by NUS UUID and/or name `TMDrake_tail` |
+| 4 | Send **`HB`** immediately after notify subscribe |
+| 5 | **`HB` every 2–5 s** while connected |
+| 6 | **`HBACK`** resets stale timer |
+| 7 | Parse **all** `STAT` tokens → sync UI |
+| 8 | **>10 s** without `HBACK` → reconnect path |
+| 9 | Resume from background → one **`HB`** |
+| 10 | User turns link OFF → stop timer, disconnect, stop service |
 
 ---
 
-## Fully supported commands (wire to UI)
+## Modes (UI labels)
+
+| ID | Label | Notes for UI |
+|----|-------|----------------|
+| 0 | Sound Phase | Mic-gated rainbow flood |
+| 1 | Sound Pulse | Mic-gated stepped colors |
+| 2 | VU Meter | Always-on mic bar |
+| 3 | Rainbow | |
+| 4 | Comet | |
+| 5 | Breathe | |
+| 6 | Dragonfire | |
+| 7 | Sparkle | |
+| 8 | Wave | |
+| 9 | Solid | Uses `C` / themes |
+| 10 | Blackout | |
+
+Send `M0`…`M10`. Suit fans out to Head + PAWBs.
+
+### Mic settings UX
+
+| Control | Cmd | Hint for user |
+|---------|-----|----------------|
+| Sound detect | `E` / `e` | Master wake for Phase/Pulse |
+| Gate | `G` | Must sit **above** quiet `Mic` (e.g. quiet 260 → G 300) |
+| Amp % | `S` | 10–400 overall mic gain |
+| Preamp % | `A` | 50–300 |
+
+Show live **`Mic`** on Status so users can tune **G**.
+
+---
+
+## Commands to wire
 
 | Feature | Command |
 |---------|---------|
-| Modes 0–10 | `M0`–`M10` |
-| Brightness / Speed | `B0-100` / `V0-100` |
-| Mic gain / sensitivity / gate | `A` / `S` / `G` |
-| Sound on/off | `E` / `e` |
-| Solid color | `C<r>,<g>,<b>` → mode 9 |
-| Themes | `T0`–`T4` or `Tpurple` `Tfire` `Tice` `Tgold` `Temerald` |
-| **Heartbeat** | **`HB`** |
+| Modes | `M0`–`M10` |
+| Brightness / speed | `B0-100` / `V0-100` |
+| Mic | `S` `A` `G` `E`/`e` |
+| Color / themes | `C<r>,<g>,<b>` · `T0`–`T4` / names |
+| Heartbeat | **`HB`** |
 | Flash / Resync / Reboot | `L` / `R` / `Z` |
 | Fan | `F0` `F1` `F2` `FT<n>` |
 | Eyes / CDS | `I<n>` `D<n>` |
-| Status dump | `?` |
+| Dump | `?` |
 
-### Theme RGB map
+Themes: purple / fire / ice / gold / emerald (see APP_INTERFACE).
 
-| Id | Name | RGB |
-|----|------|-----|
-| 0 | purple | 157, 78, 221 |
-| 1 | fire | 255, 60, 0 |
-| 2 | ice | 80, 180, 255 |
-| 3 | gold | 255, 180, 40 |
-| 4 | emerald | 20, 200, 100 |
+---
 
-### STAT tokens to parse
+## STAT tokens (must parse)
 
 `M B V S G A E C T Mic HeadB HeadT U Seq`
 
 ---
 
-## Screens (unchanged intent)
+## Screens
 
-1. **Control** — modes, B/V, theme circles + color, Flash, Resync, link indicator  
+1. **Control** — modes, B/V, themes + color, Flash, Resync, link indicator  
 2. **Status** — Mic, HeadT, HeadB, Seq/uptime, log  
-3. **Settings** — Sound, Fan, Eyes, **Keep suit linked** toggle, Reboot  
-
-Link health should be visible on Control (dot / banner).
+3. **Settings** — Sound, S/A/G, Fan, Eyes, Keep suit linked, Reboot  
 
 ---
 
-## Acceptance checklist (app)
+## Acceptance checklist
 
 - [ ] Foreground service while link enabled  
-- [ ] autoConnect after first successful pair  
+- [ ] autoConnect after first pair  
 - [ ] HB on subscribe + every 2–5 s  
-- [ ] HBACK clears stale; STAT syncs all controls  
-- [ ] >10 s without HBACK triggers reconnect path  
-- [ ] Modes, color/themes, mic, fan, CDS all live  
+- [ ] HBACK clears stale; STAT drives all controls  
+- [ ] >10 s no HBACK → reconnect  
+- [ ] Mode labels match table above  
+- [ ] Gate UX explains relationship to live Mic  
+- [ ] Fan + CDS live  
 - [ ] TMDrake branding  
 
 ---
 
-*Source of truth for wire format: APP_INTERFACE.md. Firmware questions → SYSTEM.md / FIRMWARE_NOTES.md.*
+## Lab / USB
+
+Same command language over USB **115200** (see `tools/tail_tui.py`). Useful for QA without BLE.
+
+---
+
+*Source of truth for wire format: [APP_INTERFACE.md](APP_INTERFACE.md). Architecture: [SYSTEM.md](SYSTEM.md).*
