@@ -29,6 +29,23 @@ python3 tools/tail_tui.py -l
 **Firmware:** Tail must include `checkSerialBT()` (USB lines → `processBLECommand`).  
 Close `screen` / Serial Monitor before starting (port exclusive).
 
+### If USB serial feels “locked”
+macOS only allows one process on the port. A crashed TUI / `screen` can hold it.
+
+```bash
+# See who owns the port
+lsof /dev/cu.usbserial-0001
+
+# TUI helper: SIGTERM anything holding the port
+python3 tools/tail_tui.py --release
+python3 tools/tail_tui.py --release -p /dev/cu.usbserial-0001
+```
+
+The TUI now:
+- Opens with **`dsrdtr=False` / `rtscts=False`** (avoids ESP32 download-boot glitches)
+- Uses **exclusive** open when the OS supports it
+- **Always closes** the port on `q`, Ctrl+C, or crash (`atexit` + signal handlers)
+
 ### Keys
 
 | Key | Action |

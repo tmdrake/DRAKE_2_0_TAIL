@@ -13,13 +13,15 @@ Requires Tail firmware with checkSerialBT() (USB → processBLECommand).
 from __future__ import annotations
 
 import argparse
-import re
+import atexit
+import os
+import signal
 import sys
 import threading
 import time
 from collections import deque
 from dataclasses import dataclass, field
-from typing import Deque, Dict, Optional
+from typing import Deque, List, Optional
 
 try:
     import serial
@@ -166,6 +168,30 @@ def pick_port(cli_port: Optional[str]) -> str:
     return ports[0].device
 
 
+def kill_port_holders(port: str) -> List[str]:
+    """Best-effort: kill other processes holding the USB serial port (macOS/Linux)."""
+    killed: List[str] = []
+    try:
+        import subprocess
+
+        out = subprocess.check_output(["lsof", "-t", port], text=True, stderr=subprocess.DEVNULL)
+        my_pid = str(os.getpid())
+        for pid in out.split():
+            pid = pid.strip()
+            if not pid or pid == my_pid:
+                continue
+            try:
+                os.kill(int(pid), signal.SIGTERM)
+                killed.append(pid)
+            except (ProcessLookupError, ValueError, PermissionError):
+                pass
+        if killed:
+            time.sleep(0.35)
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        pass
+    return killed
+
+
 class TailLink:
     def __init__(self, port: str, baud: int = 115200):
         self.port = port
@@ -175,25 +201,83 @@ class TailLink:
         self._rx_thread: Optional[threading.Thread] = None
         self._stop = threading.Event()
         self._lock = threading.Lock()
+        self._closed = False
 
     def open(self) -> None:
-        self.ser = serial.Serial(self.port, self.baud, timeout=0.05)
-        time.sleep(0.3)
-        self.ser.reset_input_buffer()
+        # Avoid leaving exclusive lock / download-boot from DTR/RTS glitches
+        killed = kill_port_holders(self.port)
+        if killed:
+            self.st.log.append(f"released pids: {','.join(killed)}")
+
+        kwargs = dict(
+            port=self.port,
+            baudrate=self.baud,
+            timeout=0.05,
+            write_timeout=1.0,
+            # Don't assert DTR/RTS on open — can wedge ESP32 into download mode
+            dsrdtr=False,
+            rtscts=False,
+        )
+        # exclusive lock so other tools fail loudly instead of sharing a half-dead port
+        try:
+            self.ser = serial.Serial(**kwargs, exclusive=True)
+        except TypeError:
+            self.ser = serial.Serial(**kwargs)
+        except serial.SerialException:
+            # retry after another kill pass
+            kill_port_holders(self.port)
+            time.sleep(0.4)
+            try:
+                self.ser = serial.Serial(**kwargs, exclusive=True)
+            except TypeError:
+                self.ser = serial.Serial(**kwargs)
+
+        # Explicit idle control lines (run mode, not flash mode)
+        try:
+            self.ser.dtr = False
+            self.ser.rts = False
+        except Exception:
+            pass
+
+        time.sleep(0.25)
+        try:
+            self.ser.reset_input_buffer()
+            self.ser.reset_output_buffer()
+        except Exception:
+            pass
+
+        self._closed = False
         self.st.connected = True
         self.st.log.append(f"opened {self.port} @ {self.baud}")
         self._stop.clear()
-        self._rx_thread = threading.Thread(target=self._reader, daemon=True)
+        self._rx_thread = threading.Thread(target=self._reader, daemon=True, name="tail-uart-rx")
         self._rx_thread.start()
         self.send("?")
         self.send("HB")
 
     def close(self) -> None:
+        """Idempotent — safe from atexit, signal handlers, and normal quit."""
+        if self._closed:
+            return
+        self._closed = True
         self._stop.set()
-        if self._rx_thread:
-            self._rx_thread.join(timeout=1.0)
-        if self.ser and self.ser.is_open:
-            self.ser.close()
+        thr = self._rx_thread
+        self._rx_thread = None
+        if thr and thr.is_alive() and thr is not threading.current_thread():
+            thr.join(timeout=0.8)
+        ser = self.ser
+        self.ser = None
+        if ser is not None:
+            try:
+                if ser.is_open:
+                    try:
+                        ser.dtr = False
+                        ser.rts = False
+                    except Exception:
+                        pass
+                    ser.close()
+            except Exception:
+                pass
         self.st.connected = False
 
     def send(self, cmd: str) -> None:
@@ -201,25 +285,27 @@ class TailLink:
             return
         line = (cmd.strip() + "\n").encode("utf-8")
         try:
-            self.ser.write(line)
-            self.ser.flush()
             with self._lock:
+                self.ser.write(line)
+                self.ser.flush()
                 self.st.log.append(f"→ {cmd.strip()}")
         except serial.SerialException as e:
             with self._lock:
                 self.st.log.append(f"send error: {e}")
                 self.st.connected = False
+            self.close()
 
     def _reader(self) -> None:
         buf = ""
         while not self._stop.is_set():
             try:
-                if not self.ser or not self.ser.is_open:
+                ser = self.ser
+                if not ser or not ser.is_open:
                     time.sleep(0.1)
                     continue
-                n = self.ser.in_waiting
+                n = ser.in_waiting
                 if n:
-                    chunk = self.ser.read(n).decode("utf-8", errors="replace")
+                    chunk = ser.read(n).decode("utf-8", errors="replace")
                     buf += chunk
                     while "\n" in buf:
                         line, buf = buf.split("\n", 1)
@@ -229,7 +315,6 @@ class TailLink:
                         with self._lock:
                             if "STAT" in line:
                                 parse_stat(line, self.st)
-                            # keep interesting log lines short
                             show = line
                             if show.startswith("[BLE]"):
                                 show = show[5:].strip()
@@ -256,6 +341,8 @@ class TailLink:
                 with self._lock:
                     self.st.connected = False
                     self.st.log.append("serial disconnected")
+                break
+            except Exception:
                 break
 
 
@@ -352,11 +439,27 @@ def build_ui(st: SuitState, help_hint: str) -> Layout:
 def run_tui(port: str) -> None:
     console = Console()
     link = TailLink(port)
+
+    def _cleanup(*_args) -> None:
+        link.close()
+
+    atexit.register(_cleanup)
+    # Ensure Ctrl+C / kill release the USB-UART exclusive lock
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        try:
+            signal.signal(sig, lambda s, f: (_cleanup(), sys.exit(0)))
+        except (ValueError, OSError):
+            pass
+
     try:
         link.open()
     except serial.SerialException as e:
         console.print(f"[red]Cannot open {port}: {e}[/]")
-        console.print("Close any [cyan]screen[/] / Serial Monitor using the port first.")
+        console.print(
+            "Port busy? Try:\n"
+            "  [cyan]python3 tools/tail_tui.py --release[/]\n"
+            "  or quit [cyan]screen[/] / Serial Monitor / another TUI"
+        )
         sys.exit(1)
 
     # Keyboard: Unix termios raw-ish
@@ -366,10 +469,9 @@ def run_tui(port: str) -> None:
 
     fd = sys.stdin.fileno()
     old = termios.tcgetattr(fd)
-    hint = "Polling HB every 2s · same cmds as phone app"
+    hint = "Polling HB every 2s · q quits & releases USB · --release if stuck"
     last_hb = 0.0
 
-    # shift/adjust helpers
     def adj(attr: str, delta: int, lo: int, hi: int, prefix: str) -> None:
         with link._lock:
             cur = getattr(link.st, attr)
@@ -386,6 +488,12 @@ def run_tui(port: str) -> None:
                 if now - last_hb >= 2.0:
                     link.send("HB")
                     last_hb = now
+
+                if not link.st.connected:
+                    hint = "Serial lost — quit (q) and check USB"
+                    live.update(build_ui(link.st, hint))
+                    time.sleep(0.2)
+                    continue
 
                 # non-blocking key
                 if sel.select([sys.stdin], [], [], 0.05)[0]:
@@ -432,17 +540,12 @@ def run_tui(port: str) -> None:
                     elif ch == "?":
                         link.send("?")
                     elif ch == "z":
-                        # reboot — require shift-ish: only lowercase z with confirm via double
                         link.send("Z")
                         hint = "Reboot sent (Z)"
                     elif ch == "p":
-                        # purple original solid
                         link.send("C150,0,255")
-                    elif ch == "1" and False:
-                        pass
 
                 with link._lock:
-                    # copy for render
                     snap = SuitState(
                         mode=link.st.mode,
                         brightness=link.st.brightness,
@@ -467,15 +570,23 @@ def run_tui(port: str) -> None:
                     )
                 live.update(build_ui(snap, hint))
     finally:
-        termios.tcsetattr(fd, termios.TCSADRAIN, old)
+        try:
+            termios.tcsetattr(fd, termios.TCSADRAIN, old)
+        except Exception:
+            pass
         link.close()
-        console.print("[dim]Tail TUI closed.[/]")
+        console.print("[dim]Tail TUI closed — USB serial released.[/]")
 
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="Drake Tail USB settings TUI")
     ap.add_argument("-p", "--port", help="Serial port (default: auto USB)")
     ap.add_argument("-l", "--list", action="store_true", help="List ports and exit")
+    ap.add_argument(
+        "--release",
+        action="store_true",
+        help="Kill processes holding the USB serial port and exit",
+    )
     args = ap.parse_args()
 
     if args.list:
@@ -484,7 +595,16 @@ def main() -> None:
         return
 
     port = pick_port(args.port)
-    print(f"Opening {port} … (close other serial monitors first)")
+
+    if args.release:
+        killed = kill_port_holders(port)
+        if killed:
+            print(f"Released {port} (sent SIGTERM to pids: {', '.join(killed)})")
+        else:
+            print(f"Nothing holding {port}")
+        return
+
+    print(f"Opening {port} … (q quits and releases the port)")
     run_tui(port)
 
 
