@@ -192,8 +192,7 @@ void applySolidAndBroadcast(uint8_t r, uint8_t g, uint8_t b) {
   setSolidColor(r, g, b);
   saveSolidColor();
   mode = 9;
-  MODE.put(0, mode);
-  MODE.commit();
+  nvsPutInt(MODE, mode);
   char msg[20];
   snprintf(msg, sizeof(msg), "C%d,%d,%d", r, g, b);
   forwardCmd(msg);
@@ -214,7 +213,7 @@ bool applyTheme(const String& arg) {
   else return false;
 
   themeId = id;
-  if (THEME.begin(8)) { THEME.put(0, themeId); THEME.commit(); }
+  nvsPutInt(THEME, themeId);
   applySolidAndBroadcast(r, g, b);
   return true;
 }
@@ -237,12 +236,12 @@ void processBLECommand(const String& raw) {
   switch (inByte) {
     case 'e':
       enableSound = false;
-      ENABLESOUND.put(0, enableSound); ENABLESOUND.commit();
+      nvsPutBool(ENABLESOUND, enableSound);
       blePrintln("Sound Detection OFF");
       break;
     case 'E':
       enableSound = true;
-      ENABLESOUND.put(0, enableSound); ENABLESOUND.commit();
+      nvsPutBool(ENABLESOUND, enableSound);
       blePrintln("Sound Detection ON");
       break;
     case 'L':
@@ -251,19 +250,20 @@ void processBLECommand(const String& raw) {
       forwardCmd("L0");
       break;
     case 'S': {
+      // Gain % on mic envelope (not a DC offset — silence must stay near 0 for VU)
       int temp = cmd.substring(1).toInt();
-      if (temp >= -500 && temp <= 4000) {
+      if (temp >= 10 && temp <= 400) {
         sensitivity = temp;
-        SENSITIVITY.put(0, sensitivity); SENSITIVITY.commit();
+        nvsPutInt(SENSITIVITY, sensitivity);
       }
-      blePrintln("Sensitivity=" + String(sensitivity));
+      blePrintln("Sensitivity(gain%)=" + String(sensitivity));
       break;
     }
     case 'G': {
       int temp = cmd.substring(1).toInt();
-      if (temp >= 10 && temp <= 2000) {
+      if (temp >= 5 && temp <= 2000) {
         micGate = temp;
-        GATE.put(0, micGate); GATE.commit();
+        nvsPutInt(GATE, micGate);
       }
       blePrintln("Gate=" + String(micGate));
       break;
@@ -272,7 +272,7 @@ void processBLECommand(const String& raw) {
       int temp = cmd.substring(1).toInt();
       if (temp >= 50 && temp <= 300) {
         micGain = temp;
-        GAIN.put(0, micGain); GAIN.commit();
+        nvsPutInt(GAIN, micGain);
       }
       blePrintln("Gain=" + String(micGain));
       break;
@@ -282,7 +282,7 @@ void processBLECommand(const String& raw) {
       if (temp >= 0 && temp <= 100) {
         masterBrightness = temp;
         applyMasterBrightness();
-        BRIGHTNESS.put(0, masterBrightness); BRIGHTNESS.commit();
+        nvsPutInt(BRIGHTNESS, masterBrightness);
       }
       blePrintln("Brightness=" + String(masterBrightness));
       break;
@@ -291,7 +291,7 @@ void processBLECommand(const String& raw) {
       int temp = cmd.substring(1).toInt();
       if (temp >= 0 && temp <= 100) {
         animSpeed = temp;
-        SPEED.put(0, animSpeed); SPEED.commit();
+        nvsPutInt(SPEED, animSpeed);
       }
       blePrintln("Speed=" + String(animSpeed));
       break;
@@ -355,7 +355,7 @@ void processBLECommand(const String& raw) {
       else if (mode == 10) msg[1] = 'A';
       forwardCmd(msg);
       blePrintln("Mode=" + String(mode));
-      MODE.put(0, mode); MODE.commit();
+      nvsPutInt(MODE, mode);
       break;
     }
     case '?':

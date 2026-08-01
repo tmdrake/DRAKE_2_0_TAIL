@@ -15,7 +15,19 @@
 #include <Adafruit_NeoPixel.h>
 Adafruit_NeoPixel spikes(12, LED_PIN, NEO_GRB + NEO_KHZ800);
 #define MIC A0
-#define OFFSET 1600
+// Adafruit electret amp (AGC/normalizing): DC bias ~1.25 V on 0–3.3 V rail.
+// 12-bit ADC: mid = 1.25/3.3 * 4095 ≈ 1551 (was 1600 manual → clipped half-wave).
+#define MIC_VCC_MV        3300
+#define MIC_BIAS_MV       1250
+#define OFFSET            ((4095L * MIC_BIAS_MV) / MIC_VCC_MV)  // ~1551
+// Fixed-rate envelope — VU / ESP-NOW fast. ASK mic = pulse-only for M0/M1/M2 paws.
+#define MIC_SAMPLE_US     1000   // 1 kHz ADC ticks (non-blocking)
+#define MIC_STREAM_MS     5      // envelope + ESP-NOW + Tail VU (~200 Hz)
+#define MIC_ASK_PULSE_MS  40     // max ASK "m####" rate (sound modes only; no waitPacketSent)
+// ADC counts below this after |raw−mid| are treated as silence (noise floor).
+#define MIC_DEADBAND      12
+// Adaptive scale: never divide by less than this (keeps soft sounds off full-scale).
+#define MIC_SCALE_MIN     60
 #define MAXBRIGHTNESS 75
 
 #include <Timer.h>
@@ -45,8 +57,9 @@ unsigned long lastmiclevel = -1;
 int head_brightness = -1;
 float head_temperature = -1;
 
-int sensitivity = 75;
-int micGate = 100;
+// S = post-envelope gain % (was a DC offset that forced a false “always-on” floor).
+int sensitivity = 100;
+int micGate = 40;
 int micGain = 100;
 int mode = 0;
 int lastMode = -1;
@@ -59,6 +72,18 @@ uint8_t solidR = 150, solidG = 0, solidB = 255;
 
 float micEma = 0;
 const float MIC_EMA_ALPHA = 0.35f;
+// Latest envelope after fixed-rate sampling (use this everywhere; never busy-loop ADC).
+long micLevelCached = 0;
+// Quiet baseline (AGC/room noise) — VU/wheel use (level − floor), not raw/peak.
+float micNoiseFloor = 0.0f;
+// Adaptive peak of *excess* above floor (shared M0/M1/M2).
+long micScalePeak = 80;
+static unsigned long micLastSampleUs = 0;
+static unsigned long micLastStreamMs = 0;
+static unsigned long micLastAskPulseMs = 0;
+static long micPeakInWindow = 0;
+static long lastSentMic = -9999;
+static long lastAskExcess = -1;
 
 #include <EEPROM.h>
 #define EEPROM_SIZE 8
@@ -86,16 +111,173 @@ void saveSolidColor() {
   if (COLB.begin(EEPROM_SIZE)) { COLB.put(0, solidB); COLB.commit(); }
 }
 
-long readMicLevel() {
-  long delta = (long)analogRead(MIC) - OFFSET;
-  if (delta < 0) delta = 0;
-  long level = (delta * micGain) / 100 + sensitivity;
+/** Always begin → put → commit (ESP32 NVS is flaky if namespace not open). */
+static void nvsPutInt(EEPROMClass &ns, int val) {
+  if (ns.begin(EEPROM_SIZE)) {
+    ns.put(0, val);
+    ns.commit();
+  }
+}
+static void nvsPutBool(EEPROMClass &ns, bool val) {
+  if (ns.begin(EEPROM_SIZE)) {
+    ns.put(0, val);
+    ns.commit();
+  }
+}
+
+/*
+ * One ADC sample: full-wave |raw − 1.25 V mid| on 0–3.3 V / 12-bit.
+ * True silence → 0 (no additive DC offset). S/A are % gains only.
+ * Call only from micService() on MIC_SAMPLE_US ticks.
+ */
+static long micInstantAbs() {
+  long raw = (long)analogRead(MIC);
+  long delta = raw - (long)OFFSET;
+  if (delta < 0) delta = -delta;
+  if (delta < MIC_DEADBAND) return 0;
+  // level = |Δ| × (gain%/100) × (sensitivity%/100)
+  long level = (delta * (long)micGain * (long)sensitivity) / 10000L;
   if (level < 0) level = 0;
-  micEma = MIC_EMA_ALPHA * (float)level + (1.0f - MIC_EMA_ALPHA) * micEma;
-  long smoothed = (long)(micEma + 0.5f);
-  if (smoothed < 0) smoothed = 0;
-  if ((unsigned long)smoothed > lastmiclevel) lastmiclevel = smoothed;
-  return smoothed;
+  return level;
+}
+
+/**
+ * Non-blocking mic service — call every loop().
+ *   1) Every MIC_SAMPLE_US (500 Hz): sample ADC, keep peak in window
+ *   2) Every MIC_STREAM_MS (50 Hz): EMA that peak → micLevelCached, optional stream
+ * Returns current cached level (always safe to read).
+ */
+long micService(bool streamOut) {
+  unsigned long nowUs = micros();
+  if ((long)(nowUs - micLastSampleUs) >= (long)MIC_SAMPLE_US) {
+    // Catch up at most one missed slot so a long loop doesn't free-run ADC
+    micLastSampleUs = nowUs;
+    long inst = micInstantAbs();
+    if (inst > micPeakInWindow) micPeakInWindow = inst;
+  }
+
+  unsigned long nowMs = millis();
+  if (nowMs - micLastStreamMs >= (unsigned long)MIC_STREAM_MS) {
+    micLastStreamMs = nowMs;
+    long peak = micPeakInWindow;
+    micPeakInWindow = 0;
+
+    // Fast attack / slower release on the envelope (readable VU, still snappy)
+    float p = (float)peak;
+    if (p > micEma)
+      micEma = 0.55f * p + 0.45f * micEma;
+    else
+      micEma = 0.20f * p + 0.80f * micEma;
+
+    long smoothed = (long)(micEma + 0.5f);
+    if (smoothed < 0) smoothed = 0;
+    if (smoothed < 2) {
+      smoothed = 0;
+      micEma = 0;
+    }
+    micLevelCached = smoothed;
+    lastmiclevel = (unsigned long)smoothed;  // STAT / live = raw envelope (for gate tuning)
+
+    // Noise floor: follows quiet baseline (your ~250–270). Falls quick, rises slow.
+    // Without this, adaptive peak ≈ floor and VU sits at 100% when "silent".
+    float sf = (float)smoothed;
+    if (micNoiseFloor < 1.0f)
+      micNoiseFloor = sf;  // first sample
+    else if (sf < micNoiseFloor)
+      micNoiseFloor = 0.20f * sf + 0.80f * micNoiseFloor;
+    else
+      micNoiseFloor = 0.0015f * sf + 0.9985f * micNoiseFloor;
+
+    // Excess above floor (+ small margin) — this is what lights the bar
+    long floorI = (long)(micNoiseFloor + 0.5f);
+    long margin = 12 + floorI / 20;  // a bit of headroom so hiss doesn't light bar
+    long excess = smoothed - floorI - margin;
+    if (excess < 0) excess = 0;
+
+    // Peak tracks *excess* only (loudest recent hit above quiet)
+    if (excess > micScalePeak)
+      micScalePeak = excess;
+    else if (micScalePeak > MIC_SCALE_MIN)
+      micScalePeak = (micScalePeak * 99) / 100;
+    if (micScalePeak < MIC_SCALE_MIN) micScalePeak = MIC_SCALE_MIN;
+
+    if (streamOut) {
+      // ESP-NOW: full rate excess → Head VU / Phase / Pulse
+      if (abs(excess - lastSentMic) >= 2 || excess == 0) {
+        lastSentMic = excess;
+        int16_t level16 = (int16_t)constrain(excess, 0, 32767);
+        espnowSendMic(level16);
+      }
+
+      // ASK → PAWB: pulse-only on M0/M1/M2 (not continuous stream; no waitPacketSent)
+      // Modes 3–10 only need M#/C/R0 via forwardCmd — no mic ASK.
+      if (mode >= 0 && mode <= 2) {
+        bool hit = (excess >= 20);  // real energy above floor
+        bool changed = (abs(excess - lastAskExcess) >= 25);
+        bool due = (nowMs - micLastAskPulseMs >= (unsigned long)MIC_ASK_PULSE_MS);
+        // Send on loud hit+change, or a quiet zero once so paws release
+        if (due && ((hit && changed) || (excess == 0 && lastAskExcess > 0))) {
+          micLastAskPulseMs = nowMs;
+          lastAskExcess = excess;
+          char msg[16];
+          ltoa(excess, msg, 10);
+          size_t n = strlen(msg);
+          memmove(msg + 1, msg, n + 1);
+          msg[0] = 'm';
+          Ask_TX.send((uint8_t *)msg, n + 1);  // queue only — do not waitPacketSent
+        }
+      }
+    }
+
+#ifdef DEBUG_MIC
+    Serial.print("Mic raw=");
+    Serial.print(smoothed);
+    Serial.print(" flr=");
+    Serial.print((int)micNoiseFloor);
+    Serial.print(" xs=");
+    Serial.print(excess);
+    Serial.print(" pk=");
+    Serial.print(micScalePeak);
+    Serial.print(" n=");
+    Serial.println(micNorm01(), 2);
+#endif
+  }
+  return micLevelCached;
+}
+
+/** Gate / display: last fixed-rate envelope (never a one-shot ADC read). */
+long readMicLevel() {
+  return micService(false);
+}
+
+/** Excess above noise floor (same units as streamed to Head). */
+long micExcess() {
+  long floorI = (long)(micNoiseFloor + 0.5f);
+  long margin = 12 + floorI / 20;
+  long excess = micLevelCached - floorI - margin;
+  if (excess < 0) excess = 0;
+  return excess;
+}
+
+/**
+ * Shared intensity 0..1 for VU + Sound Phase/Pulse.
+ * Quiet (at noise floor) → ~0; loud peaks → ~1. Not raw/peak (that stayed full).
+ */
+float micNorm01() {
+  long peak = micScalePeak;
+  if (peak < MIC_SCALE_MIN) peak = MIC_SCALE_MIN;
+  long xs = micExcess();
+  float n = (float)xs / (float)peak;
+  if (n > 1.0f) n = 1.0f;
+  if (n < 0.0f) n = 0.0f;
+  // Small values stay off — bar should look empty until real hits
+  if (n < 0.04f) n = 0.0f;
+  return n;
+}
+
+/** 0..100 for VU bars / percent maps. */
+int micNormPct() {
+  return (int)(micNorm01() * 100.0f + 0.5f);
 }
 
 void setup() {
@@ -103,12 +285,22 @@ void setup() {
   Ask_TX.init();
   pinMode(LED_BUILTIN, OUTPUT);
   pinMode(MIC, INPUT);
+  // 0–3.3 V full scale (Adafruit mic bias 1.25 V, peaks toward 0 / 3.3)
+  analogSetPinAttenuation(MIC, ADC_11db);
+  analogReadResolution(12);
 
   spikes.begin();
   spikes.show();
 
   Serial.begin(115200);
   Serial.println("Drake Tail....GO! (C + T themes)");
+  Serial.print("Mic: bias 1.25V OFFSET=");
+  Serial.print((int)OFFSET);
+  Serial.print(" sample=");
+  Serial.print(1000000L / MIC_SAMPLE_US);
+  Serial.print("Hz stream=");
+  Serial.print(1000 / MIC_STREAM_MS);
+  Serial.println("Hz (full-wave)");
 
   // STA to Head SoftAP (fixed channel 2) so ESP-NOW home channel matches peer
   WiFi.mode(WIFI_STA);
@@ -149,11 +341,12 @@ void setup() {
   Serial.println("Restoring settings..");
   if (MODE.begin(EEPROM_SIZE)) {
     MODE.get(0, mode);
-    if (mode < 0 || mode > 10) { mode = 0; MODE.put(0, mode); MODE.commit(); }
+    if (mode < 0 || mode > 10) { mode = 0; nvsPutInt(MODE, mode); }
   }
   if (SENSITIVITY.begin(EEPROM_SIZE)) {
     SENSITIVITY.get(0, sensitivity);
-    if (sensitivity < -500 || sensitivity > 4000) sensitivity = 75;
+    // S is gain % now (10–400). Old “offset” values like 75 still work as 75% gain.
+    if (sensitivity < 10 || sensitivity > 400) sensitivity = 100;
   }
   if (ENABLESOUND.begin(EEPROM_SIZE)) {
     ENABLESOUND.get(0, enableSound);
@@ -169,7 +362,7 @@ void setup() {
   }
   if (GATE.begin(EEPROM_SIZE)) {
     GATE.get(0, micGate);
-    if (micGate < 10 || micGate > 2000) micGate = 100;
+    if (micGate < 5 || micGate > 2000) micGate = 40;
   }
   if (GAIN.begin(EEPROM_SIZE)) {
     GAIN.get(0, micGain);
@@ -182,6 +375,23 @@ void setup() {
     THEME.get(0, themeId);
     if (themeId < 0 || themeId > 4) themeId = 0;
   }
+
+  Serial.print("NVS: M=");
+  Serial.print(mode);
+  Serial.print(" B=");
+  Serial.print(masterBrightness);
+  Serial.print(" V=");
+  Serial.print(animSpeed);
+  Serial.print(" S=");
+  Serial.print(sensitivity);
+  Serial.print(" G=");
+  Serial.print(micGate);
+  Serial.print(" A=");
+  Serial.print(micGain);
+  Serial.print(" E=");
+  Serial.print(enableSound ? 1 : 0);
+  Serial.print(" T=");
+  Serial.println(themeId);
 
   applyMasterBrightness();
   setupBLE();
@@ -213,6 +423,9 @@ void loop() {
   // Loop WDT (enableLoopWDT) is fed when loop returns; also reset mid-loop
   // so long suit-sync / ASK bursts don't edge the 30s timeout.
   esp_task_wdt_reset();
+  // Always tick mic at fixed 500 Hz (envelope for ≤200 Hz after LPF)
+  bool streamMic = (mode >= 0 && mode <= 2) || soundmode;
+  micService(streamMic);
   t.update();
   if (!flashed) sound_detect();
   checkSerialBT();    // USB serial TUI / monitor (same cmds as BLE)
@@ -223,30 +436,32 @@ void loop() {
 }
 
 void sound_detect() {
-  // Modes 2–10 run continuously (VU needs live mic stream to Head every frame)
+  // Modes 2–10 run continuously (VU needs live mic stream to Head)
   if (mode >= 2 && mode <= 10) {
     mode_selector(mode);
     digitalWrite(LED_BUILTIN, LOW);
     return;
   }
-  // Modes 0–1: sound-reactive when above gate; idle purple fade when quiet
+  // Modes 0–1: color wheel ONLY while sound hits gate; else idle purple keep-alive
   if (soundmode && enableSound) {
     mode_selector(mode);
     digitalWrite(LED_BUILTIN, HIGH);
-    if (millis() - lastime > 10000) {
+    // Drop back to idle soon after quiet (original feel: mostly off until sound)
+    if (millis() - lastime > 2500) {
       soundmode = false;
       resetBrightnessandDirection();
+      resetSoundloopState();
       sendbackgroundloopReset();
     }
   } else {
-    fading();
+    fading();  // original power-save keep-alive + R0 resync (see Background_loop.ino)
     digitalWrite(LED_BUILTIN, LOW);
     lastmiclevel = 0;
   }
-  long micLevel = readMicLevel();
+  long micLevel = micLevelCached;  // from fixed-rate micService in loop()
   if (enableSound && micLevel > micGate) {
     soundmode = true;
-    lastime = millis();
+    lastime = millis();  // hold while audio above gate
   }
 }
 
@@ -274,8 +489,9 @@ void mode_selector(int m) {
     lastMode = m;
   }
   switch (m) {
-    case 0: soundloop(millis(), 50, false); break;
-    case 1: soundloop(millis(), 50, true); break;
+    // V: scroll period ~40..8 ms (original was ~50 ms fixed; keep it snappy)
+    case 0: soundloop(millis(), map(constrain(animSpeed, 0, 100), 0, 100, 40, 8), false); break;  // Sound Phase
+    case 1: soundloop(millis(), map(constrain(animSpeed, 0, 100), 0, 100, 40, 8), true); break;   // Sound Pulse
     case 2: soundcheck(); break;
     case 3: mode_rainbow_chase(); break;
     case 4: mode_comet(); break;

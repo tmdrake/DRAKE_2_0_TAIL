@@ -129,6 +129,7 @@ void mode_off() {
 void resetModeState() {
   modePrevMillis = 0;
   suitPhase = 0;
+  resetSoundloopState();  // M0 Sound Phase / M1 Sound Pulse
 }
 
 /**

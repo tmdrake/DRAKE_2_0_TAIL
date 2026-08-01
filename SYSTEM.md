@@ -1,6 +1,6 @@
 # Drake 2.0 – System Documentation
 
-**Last updated:** July 2026  
+**Last updated:** August 2026  
 **Audience:** Firmware team + app team  
 Related: [ESPNOW.md](ESPNOW.md) · [APP_INTERFACE.md](APP_INTERFACE.md) · [SETTINGS.md](SETTINGS.md)
 
@@ -47,7 +47,7 @@ All active paths are **non-blocking** (`millis()` gates, no `delay()` on the hot
 | ID | Name | Tail | Head | PAWB |
 |----|------|:----:|:----:|:----:|
 | 0 | Sound Phase | ✅ | ✅ | ✅ |
-| 1 | Sound Distinct | ✅ | ✅ | ✅ |
+| 1 | Sound Pulse | ✅ | ✅ | ✅ |
 | 2 | VU Meter | ✅ | ✅ | ✅ |
 | 3 | Rainbow Chase | ✅ | ✅ | ✅ |
 | 4 | Comet | ✅ | ✅ | ✅ |
@@ -60,7 +60,7 @@ All active paths are **non-blocking** (`millis()` gates, no `delay()` on the hot
 
 ### Behaviour rules
 
-- Modes **0–1** (and Tail/PAWB sound path): mic-reactive; idle fade when quiet (after timeout).
+- Modes **0–1** (Sound Phase / Sound Pulse): mic-reactive while gated; after ~10 s quiet (or sound detect off) → idle **purple pulse** (`fading()`). That pulse was the original keep-alive so power-save would not shut the Arduino down; it still breaths purple and periodically sends **R0** resync (ASK + UDP).
 - Modes **2–10**: run **continuously** once selected.
 - Mode change: Tail broadcasts `M0`…`M9` / `MA` over **ESP-NOW + UDP + ASK**.
 - Head eyes (pixels **0–3**): after each frame, CDS dim is re-applied (`I` threshold, `D` percent).
@@ -79,21 +79,45 @@ All active paths are **non-blocking** (`millis()` gates, no `delay()` on the hot
 
 ## 3. Mic path (Tail)
 
+Adafruit electret amp (AGC/normalizing), **DC bias 1.25 V**, rail **0–3.3 V max**, hardware LPF for **≤ ~200 Hz**.
+
 ```text
-delta  = max(0, analogRead(A0) - OFFSET)   // OFFSET = 1600
-level  = delta * (micGain/100) + sensitivity
-smooth = EMA(level)
-wake   = smooth > micGate   // modes 0–1
+// 12-bit ADC, ADC_11db → 0..3.3 V full scale
+OFFSET = 1.25/3.3 * 4095 ≈ 1551
+tick   every 2 ms  (500 Hz)   // non-blocking; ≥2× 200 Hz
+delta  = |analogRead(A0) - OFFSET|   // full-wave; deadband kills noise
+if delta < MIC_DEADBAND → 0          // true silence (no DC offset add)
+level  = delta × (A%/100) × (S%/100)
+smooth = fast-attack/slow-release EMA → micLevelCached @ 50 Hz
+wake   = smooth > micGate            // modes 0–1
 ```
 
 | Setting | Cmd | Default | NVS |
 |---------|-----|---------|-----|
-| Sensitivity | `S` | 75 | yes |
-| Gate | `G` | 100 | yes |
+| Sensitivity (gain %) | `S` | 100 | yes |
+| Gate | `G` | 40 | yes |
 | Gain % | `A` | 100 | yes |
 | Sound enable | `E`/`e` | on | yes |
 
-Stream to Head: ESP-NOW type `0x01` (int16). Paws: ASK `m####`.
+Stream to Head @ **~200 Hz** (`MIC_STREAM_MS=5`, ADC 1 kHz): ESP-NOW type `0x01` (int16 excess).  
+
+**ASK mic pulse (M0/M1/M2 only):** `m####` at most ~25 Hz, only on real hits / release — no `waitPacketSent`.  
+Modes **3–10**: ASK carries **M# / C / R0 / L** only (no mic stream).
+
+**Shared scale** (`micNorm01()` / `micNormPct()`):
+
+```text
+micScalePeak = adaptive max of envelope (slow decay, min MIC_SCALE_MIN)
+intensity    = micLevelCached / micScalePeak   // silence → 0
+```
+
+| Mode | Effect |
+|------|--------|
+| **0** | Color flood: shift + inject × intensity; smooth hue wheel |
+| **1** | Same flood; stepped 6-color wheel every strip length |
+| **2** | VU bar + peak-hold marker (same `micNorm01`) |
+
+Head M0–M2 use the same `micNorm01()` on remote mic (ESP-NOW).
 
 ---
 

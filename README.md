@@ -3,13 +3,17 @@
 ESP32 (Node32S) firmware for the **dragonsuit tail** — system hub.
 
 ## Role
-- Analog mic (`A0`, offset 1600) + sound-reactive modes
+- Analog mic (`A0`, Adafruit ~1.25 V bias on 0–3.3 V) + fixed-rate envelope
 - **BLE** remote control (NimBLE NUS)
-- **ESP-NOW** ↔ Head (mic, commands, phase sync, sensors)
-- **ASK TX** (pin 17) → PAWB claws
-- WiFi STA to Head SoftAP
+- **ESP-NOW** ↔ Head (mic excess ~200 Hz, commands, phase sync, sensors)
+- **ASK TX** (pin 17) → PAWB: mode/cmd always; **mic pulse only on M0–M2**
+- WiFi STA to Head SoftAP (`TMDRAKE` ch2)
 - 12× NeoPixels (GPIO 22)
 - **USB serial** same command language as BLE (for tools / TUI)
+
+### Mic scale (M0 Sound Phase / M1 Sound Pulse / M2 VU)
+Noise-floor track → **excess** → `micNorm01()` (quiet ≈ empty bar / inject).  
+Gate **G** wakes M0/M1; VU always paints from excess.
 
 ## Tail settings TUI (Mac / Linux)
 

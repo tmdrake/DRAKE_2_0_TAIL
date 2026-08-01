@@ -21,9 +21,10 @@
 // esp_now.h / esp_wifi.h included from DRAKE_2_0_TAIL.ino (Arduino prototype order)
 
 // ---- Peer MAC ----
-// Hardcoded fallback from Head flash log; after STA joins SoftAP we prefer WiFi.BSSID()
-// (ESP8266 SoftAP MAC can differ from STA MAC — wrong peer = silent no-sync)
-uint8_t HEAD_PEER_MAC[6] = {0x9C, 0x9C, 0x1F, 0x46, 0x82, 0x33};
+// MUST be SoftAP MAC (not STA). Head prints both at boot; client sees SoftAP as BSSID.
+// This unit: STA 9C:9C:1F:46:82:33  /  SoftAP 9E:9C:1F:46:82:33
+// After STA joins SoftAP we still prefer live WiFi.BSSID().
+uint8_t HEAD_PEER_MAC[6] = {0x9E, 0x9C, 0x1F, 0x46, 0x82, 0x33};
 
 // Keys kept for future; ESP32↔ESP8266 encrypted ESP-NOW is unreliable across stacks
 static const char ESPNOW_PMK[17] = "TMDrakePMK_2026!";

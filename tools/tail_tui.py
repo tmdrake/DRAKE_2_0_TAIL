@@ -394,16 +394,17 @@ def build_ui(st: SuitState, help_hint: str) -> Layout:
     stbl.add_column("Setting")
     stbl.add_column("Value", justify="right")
     stbl.add_column("Bar")
-    stbl.add_row("B±", "Brightness", f"{st.brightness}", bar(st.brightness, 0, 100))
-    stbl.add_row("V±", "Speed", f"{st.speed}", bar(st.speed, 0, 100))
-    stbl.add_row("S±", "Mic sensitivity", f"{st.sensitivity}", bar(st.sensitivity, -100, 200))
-    stbl.add_row("G±", "Mic gate", f"{st.gate}", bar(st.gate, 10, 500))
-    stbl.add_row("A±", "Mic gain %", f"{st.gain}", bar(st.gain, 50, 300))
+    stbl.add_row("[ ]", "Brightness B", f"{st.brightness}", bar(st.brightness, 0, 100))
+    stbl.add_row("; '", "Speed V", f"{st.speed}", bar(st.speed, 0, 100))
+    stbl.add_row(", .", "S amp %", f"{st.sensitivity}", bar(st.sensitivity, 10, 400))
+    stbl.add_row("g G", "G gate", f"{st.gate}", bar(st.gate, 5, 800))
+    stbl.add_row("n N", "A preamp %", f"{st.gain}", bar(st.gain, 50, 300))
     stbl.add_row("E", "Sound detect", "ON" if st.sound else "OFF", "")
     stbl.add_row("F", f"Fan {FAN_MODES.get(st.fan, '?')}", f"F{st.fan}", "")
     th = next((n for i, n, _ in THEMES if i == st.theme), "?")
     stbl.add_row("T", "Theme", f"{st.theme} {th}", "")
     stbl.add_row("C", "Color RGB", st.color, "")
+    stbl.add_row(":", "Type cmd", "G300  A100  S100", "")
     layout["settings"].update(Panel(stbl, title="Settings", border_style="yellow"))
 
     # Status + log
@@ -411,6 +412,7 @@ def build_ui(st: SuitState, help_hint: str) -> Layout:
     s2.add_column("k", style="dim", width=8)
     s2.add_column("v")
     s2.add_row("Mic", f"{st.mic}  {bar(st.mic, 0, 800, 12)}")
+    s2.add_row("Gate G", f"{st.gate}  (open when Mic > G)")
     s2.add_row("HeadT", f"{st.head_t:.1f} °F")
     s2.add_row("HeadB", f"{st.head_b}")
     s2.add_row("Uptime", f"{st.uptime}s")
@@ -427,9 +429,9 @@ def build_ui(st: SuitState, help_hint: str) -> Layout:
     # Footer help
     help_text = (
         "[bold]Keys[/]  "
-        "0-9/a mode · [ / ] bright · ; / ' speed · e sound · "
-        "t theme · f fan · l flash · r resync · h HB · ? help · "
-        "q quit\n"
+        "0-9 mode · a=M10 · [ ] B · ; ' V · , . S · [bold]g/G gate[/] · [bold]n/N A-preamp[/] · "
+        "e sound · t theme · f fan · l flash · r resync · h HB · "
+        "[bold cyan]:[/] cmd line · q quit\n"
         f"[dim]{help_hint}[/]"
     )
     layout["footer"].update(Panel(help_text, border_style="dim", box=box.ROUNDED))
@@ -469,8 +471,14 @@ def run_tui(port: str) -> None:
 
     fd = sys.stdin.fileno()
     old = termios.tcgetattr(fd)
-    hint = "Polling HB every 2s · q quits & releases USB · --release if stuck"
+    hint = (
+        "g/G = gate  n/N = A preamp  ,/. = S amp  ·  :G300 Enter for exact · "
+        "q quits · --release if stuck"
+    )
     last_hb = 0.0
+    # Multi-char command line (":" then type G300 / M0 / S100 … Enter)
+    cmd_mode = False
+    cmd_buf = ""
 
     def adj(attr: str, delta: int, lo: int, hi: int, prefix: str) -> None:
         with link._lock:
@@ -485,7 +493,7 @@ def run_tui(port: str) -> None:
         with Live(build_ui(link.st, hint), console=console, refresh_per_second=8) as live:
             while True:
                 now = time.time()
-                if now - last_hb >= 2.0:
+                if now - last_hb >= 2.0 and not cmd_mode:
                     link.send("HB")
                     last_hb = now
 
@@ -500,11 +508,44 @@ def run_tui(port: str) -> None:
                     ch = sys.stdin.read(1)
                     if not ch:
                         continue
+
+                    # ── command chain mode: type full firmware cmds ──
+                    if cmd_mode:
+                        if ch in ("\x1b", "\x03"):  # Esc / Ctrl-C cancel
+                            cmd_mode = False
+                            cmd_buf = ""
+                            hint = "Cmd cancelled"
+                        elif ch in ("\r", "\n"):
+                            raw = cmd_buf.strip()
+                            cmd_mode = False
+                            cmd_buf = ""
+                            if raw:
+                                # Allow "G300 M0" style chains (space-separated)
+                                parts = raw.split()
+                                for p in parts:
+                                    link.send(p)
+                                hint = f"Sent: {' '.join(parts)}"
+                            else:
+                                hint = "Empty cmd"
+                        elif ch in ("\x7f", "\b"):  # backspace
+                            cmd_buf = cmd_buf[:-1]
+                            hint = f":{cmd_buf}█"
+                        elif ch.isprintable() and len(cmd_buf) < 48:
+                            cmd_buf += ch
+                            hint = f":{cmd_buf}█"
+                        live.update(build_ui(link.st, hint))
+                        continue
+
                     if ch in ("q", "Q", "\x03"):  # q or Ctrl-C
                         break
-                    if ch in "0123456789":
+                    if ch == ":":
+                        cmd_mode = True
+                        cmd_buf = ""
+                        hint = ":█  (G300 gate · A100 preamp · S100 · Enter send · Esc cancel)"
+                    elif ch in "0123456789":
                         link.send(f"M{ch}")
                     elif ch in ("a", "A"):
+                        # Mode 10 only as single-key shortcut (not gain — gain is n/N or :A…)
                         link.send("M10")
                     elif ch == "[":
                         adj("brightness", -5, 0, 100, "B")
@@ -515,9 +556,19 @@ def run_tui(port: str) -> None:
                     elif ch == "'":
                         adj("speed", 5, 0, 100, "V")
                     elif ch == ",":
-                        adj("sensitivity", -10, -500, 4000, "S")
+                        adj("sensitivity", -10, 10, 400, "S")
                     elif ch == ".":
-                        adj("sensitivity", 10, -500, 4000, "S")
+                        adj("sensitivity", 10, 10, 400, "S")
+                    elif ch == "g":
+                        # Gate down (firmware G) — not mic gain
+                        adj("gate", -10, 5, 2000, "G")
+                    elif ch == "G":
+                        adj("gate", 10, 5, 2000, "G")
+                    elif ch == "n":
+                        # A preamp % (firmware A) — separate from gate G
+                        adj("gain", -10, 50, 300, "A")
+                    elif ch == "N":
+                        adj("gain", 10, 50, 300, "A")
                     elif ch == "e":
                         with link._lock:
                             on = link.st.sound
@@ -568,6 +619,8 @@ def run_tui(port: str) -> None:
                         last_stat=link.st.last_stat,
                         raw_line=link.st.raw_line,
                     )
+                if cmd_mode:
+                    hint = f":{cmd_buf}█  (Enter send · Esc cancel)"
                 live.update(build_ui(snap, hint))
     finally:
         try:
