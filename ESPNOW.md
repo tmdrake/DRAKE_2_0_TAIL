@@ -43,12 +43,17 @@ SoftAP MAC:  ...   ← what Tail must use if hardcoding
 | ESP8266 Arduino | `esp_now_set_kok` + `add_peer(..., key, 16)` |
 
 Keys can match byte-for-byte and still fail **silently** across chips/IDF vs non-OS SDK.
+`add_peer` succeeds; **recv never fires** on the ESP8266 side until encrypt is disabled.
 
 **Current policy:** `#define ESPNOW_ENCRYPT 0` on **both** Tail and Head.  
 Keys remain in source for same-chip / future use; peer is **unencrypted**.  
 Suit traffic is short-range SoftAP-adjacent; AES was not worth the dead link.
 
 **Blame:** Cross-architecture ESP-NOW crypto interoperability, not “wrong password” in our strings.
+
+**Issue draft for Espressif / core trackers:**  
+[docs/ESPNOW_ENCRYPT_CROSS_CHIP_ISSUE.md](docs/ESPNOW_ENCRYPT_CROSS_CHIP_ISSUE.md)  
+(ready to paste into arduino-esp32 / esp8266/Arduino / esp-idf issues)
 
 ### 3. Peer channel ≠ home channel
 
