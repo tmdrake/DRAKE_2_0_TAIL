@@ -210,12 +210,16 @@ void setup() {
 }
 
 void loop() {
+  // Loop WDT (enableLoopWDT) is fed when loop returns; also reset mid-loop
+  // so long suit-sync / ASK bursts don't edge the 30s timeout.
+  esp_task_wdt_reset();
   t.update();
   if (!flashed) sound_detect();
   checkSerialBT();    // USB serial TUI / monitor (same cmds as BLE)
   pushLiveStatus();   // app STAT ~2 Hz while BLE connected
   pushSuitSync();     // Head/PAWB settings heartbeat ~30 s (+ once after boot)
   pushPhaseSync();    // Head anim phase ~25 Hz (rainbow/comet/breathe/wave)
+  esp_task_wdt_reset();
 }
 
 void sound_detect() {

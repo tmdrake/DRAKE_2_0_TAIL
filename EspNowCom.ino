@@ -54,6 +54,7 @@ void ensureEspNowChannel() {
   if (WiFi.status() == WL_CONNECTED && WiFi.channel() != (int)ESPNOW_CH) {
     WiFi.disconnect(false, false);
     delay(30);
+    yield();
   }
   esp_err_t err = esp_wifi_set_channel(ESPNOW_CH, WIFI_SECOND_CHAN_NONE);
   if (err != ESP_OK) {

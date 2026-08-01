@@ -14,6 +14,14 @@ Related: [ESPNOW.md](ESPNOW.md) · [APP_INTERFACE.md](APP_INTERFACE.md) · [SETT
 | **Head** | `DRAKE_2_0_HEAD` | ESP8266 | SoftAP ch2, ESP-NOW, modes 0–10, CDS eyes, fan, temp |
 | **PAWB** | `DRAKE_2_0_PAWB` | Pro Mini | Claws, ASK RX, modes 0–10 |
 
+### Watchdog (WDT)
+
+| Board | WDT | Notes |
+|-------|-----|--------|
+| **Tail** | Loop WDT **30 s** (`enableLoopWDT` + `esp_task_wdt_reset` in loop / after ASK) | Avoid long `delay()` in loop; `rainbow.ino` blocking demos unused |
+| **Head** | ESP8266 SW WDT (~**3 s**) — `wdt_reset()` each loop + around DS18B20 re-probe | Never call blocking `Other_modes.ino` delays from loop |
+| **PAWB** | AVR WDT not enabled in firmware | |
+
 ### Mode persistence (all regions)
 
 | Board | Storage | When saved | Boot |

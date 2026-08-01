@@ -92,13 +92,17 @@ static void udpToHead(const char *msg) {
 void forwardCmd(const char *msg) {
   espnowSendCmd(msg);
   udpToHead(msg);
+  // ASK at 2000 baud: short packets are ~tens of ms; still yield for Loop WDT
   Ask_TX.send((uint8_t *)msg, strlen(msg));
   Ask_TX.waitPacketSent();
+  yield();
+  esp_task_wdt_reset();
 }
 
 void forwardHeadCmd(const char *msg) {
   espnowSendCmd(msg);
   udpToHead(msg);
+  yield();
 }
 
 /* Remember F/FT/I/D so the 30 s suit sync can re-apply them */
@@ -141,9 +145,10 @@ void syncSuitSettings() {
   if (mode == 9) {
     char cmsg[24];
     snprintf(cmsg, sizeof(cmsg), "C%d,%d,%d", solidR, solidG, solidB);
-    forwardCmd(cmsg);
+    forwardCmd(cmsg);  // includes ASK wait — yields inside
   }
   forwardCmd(mmsg);
+  esp_task_wdt_reset();
 
   char h[20];
   snprintf(h, sizeof(h), "F%d", headFanMode);
@@ -154,6 +159,7 @@ void syncSuitSettings() {
   forwardHeadCmd(h);
   snprintf(h, sizeof(h), "D%d", headEyeDimPct);
   forwardHeadCmd(h);
+  esp_task_wdt_reset();
 
   Serial.print("Suit sync → ");
   Serial.print(mmsg);
@@ -336,7 +342,9 @@ void processBLECommand(const String& raw) {
       break;
     case 'Z':
       blePrintln("REBOOTING...");
-      delay(500);
+      esp_task_wdt_reset();
+      delay(200);
+      esp_task_wdt_reset();
       ESP.restart();
       break;
     case 'M': {
