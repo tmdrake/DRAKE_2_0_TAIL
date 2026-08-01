@@ -100,6 +100,13 @@ Stream to Head: ESP-NOW type `0x01` (int16). Paws: ASK `m####`.
 | Tail→PAWB | ASK 2000 baud, pin 17 → A0 |
 | Phone→Tail | BLE NUS |
 
+### Suit settings heartbeat (Tail → Head / PAWB)
+
+- **When:** ~**2 s after Tail boot**, then every **~30 s**
+- **What:** re-broadcast current **mode** (`M*`), **solid color** if mode 9 (`C*`), and last Head **fan/CDS** (`F*` `FT*` `I*` `D*`)
+- **Why:** Head or paws rebooted / missed a packet still rejoin the same look without touching the app
+- **Not:** animation phase lock (Breathe still free-runs per board)
+
 ESP-NOW details: [ESPNOW.md](ESPNOW.md) (peer MACs required on bench).
 
 ---

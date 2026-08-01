@@ -1,6 +1,7 @@
 /*
  * Serial_RoutineBT.ino – NimBLE NUS
  * C/T color + HB heartbeat for app data sync
+ * Suit settings heartbeat: re-push mode/color/head settings every ~30 s
  */
 
 #include <NimBLEDevice.h>
@@ -9,12 +10,23 @@
 #define NUS_RX_UUID           "6E400002-B5A3-F393-E0A9-E50E24DCCA9E"
 #define NUS_TX_UUID           "6E400003-B5A3-F393-E0A9-E50E24DCCA9E"
 
+/** How often Tail re-broadcasts current suit settings to Head (+ PAWB mode). */
+#define SUIT_SYNC_INTERVAL_MS   30000UL
+/** First sync shortly after boot so Head/PAWB catch NVS mode after power-on. */
+#define SUIT_SYNC_BOOT_DELAY_MS  2000UL
+
 NimBLECharacteristic* pTxCharacteristic = nullptr;
 NimBLEServer* pServer = nullptr;
 bool deviceConnected = false;
 
 unsigned long lastAppHbMs = 0;   // last HB from app
 uint32_t hbSeq = 0;              // increments each HB reply
+
+// Shadow of last Head-only settings (app may change these via Tail)
+int headFanMode = 2;             // 0 off, 1 on, 2 auto
+float headFanThreshF = 85.0f;
+int headCdsThresh = 500;
+int headEyeDimPct = 10;
 
 void blePrint(const String& msg) {
   if (pTxCharacteristic && deviceConnected) {
@@ -67,16 +79,107 @@ void replyHeartbeat() {
   blePrint(buildStatLine());
 }
 
+/** Head SoftAP is always 192.168.4.1 — unicast is more reliable than 255.255.255.255 */
+static void udpToHead(const char *msg) {
+  if (!msg) return;
+  size_t n = strlen(msg);
+  // Primary: unicast to Head SoftAP
+  udp.writeTo((const uint8_t *)msg, n, IPAddress(192, 168, 4, 1), 1234);
+  // Also broadcast on the SoftAP subnet
+  udp.writeTo((const uint8_t *)msg, n, IPAddress(192, 168, 4, 255), 1234);
+}
+
 void forwardCmd(const char *msg) {
   espnowSendCmd(msg);
-  udp.broadcastTo(msg, 1234);
+  udpToHead(msg);
   Ask_TX.send((uint8_t *)msg, strlen(msg));
   Ask_TX.waitPacketSent();
 }
 
 void forwardHeadCmd(const char *msg) {
   espnowSendCmd(msg);
-  udp.broadcastTo(msg, 1234);
+  udpToHead(msg);
+}
+
+/* Remember F/FT/I/D so the 30 s suit sync can re-apply them */
+void rememberHeadCmd(const char *cmd) {
+  if (!cmd || !cmd[0]) return;
+  if (cmd[0] == 'F') {
+    if (cmd[1] == 'T' || cmd[1] == 't') {
+      float tf = atof(cmd + 2);
+      if (tf >= 50.0f && tf <= 120.0f) headFanThreshF = tf;
+    } else {
+      int m = atoi(cmd + 1);
+      if (m >= 0 && m <= 2) headFanMode = m;
+    }
+  } else if (cmd[0] == 'I') {
+    int v = atoi(cmd + 1);
+    if (v >= 0 && v <= 1023) headCdsThresh = v;
+  } else if (cmd[0] == 'D') {
+    int v = atoi(cmd + 1);
+    if (v >= 1 && v <= 100) headEyeDimPct = v;
+  }
+}
+
+/**
+ * Re-push current settings to Head (ESP-NOW + UDP) and mode to PAWB (ASK).
+ * Safe if Head rebooted or missed a packet — does not force solid unless mode is 9.
+ */
+void syncSuitSettings() {
+  char mmsg[4];
+  if (mode >= 0 && mode <= 9) {
+    mmsg[0] = 'M';
+    mmsg[1] = (char)('0' + mode);
+    mmsg[2] = '\0';
+  } else {
+    mmsg[0] = 'M';
+    mmsg[1] = 'A';  // mode 10
+    mmsg[2] = '\0';
+  }
+
+  // Head treats C as solid + mode 9 — only send color when we are in solid
+  if (mode == 9) {
+    char cmsg[24];
+    snprintf(cmsg, sizeof(cmsg), "C%d,%d,%d", solidR, solidG, solidB);
+    forwardCmd(cmsg);
+  }
+  forwardCmd(mmsg);
+
+  char h[20];
+  snprintf(h, sizeof(h), "F%d", headFanMode);
+  forwardHeadCmd(h);
+  snprintf(h, sizeof(h), "FT%.0f", headFanThreshF);
+  forwardHeadCmd(h);
+  snprintf(h, sizeof(h), "I%d", headCdsThresh);
+  forwardHeadCmd(h);
+  snprintf(h, sizeof(h), "D%d", headEyeDimPct);
+  forwardHeadCmd(h);
+
+  Serial.print("Suit sync → ");
+  Serial.print(mmsg);
+  Serial.print(" F");
+  Serial.print(headFanMode);
+  Serial.print(" FT");
+  Serial.println(headFanThreshF, 0);
+}
+
+/** Periodic / boot suit settings heartbeat (call from loop). */
+void pushSuitSync() {
+  static unsigned long lastSyncMs = 0;
+  static bool didBootSync = false;
+  unsigned long now = millis();
+
+  if (!didBootSync) {
+    if (now < SUIT_SYNC_BOOT_DELAY_MS) return;
+    didBootSync = true;
+    lastSyncMs = now;
+    syncSuitSettings();
+    return;
+  }
+
+  if (now - lastSyncMs < SUIT_SYNC_INTERVAL_MS) return;
+  lastSyncMs = now;
+  syncSuitSettings();
 }
 
 void applySolidAndBroadcast(uint8_t r, uint8_t g, uint8_t b) {
@@ -211,14 +314,17 @@ void processBLECommand(const String& raw) {
       break;
     }
     case 'F':
+      rememberHeadCmd(cmd.c_str());
       forwardHeadCmd(cmd.c_str());
       blePrintln("Fan cmd: " + cmd);
       break;
     case 'I':
+      rememberHeadCmd(cmd.c_str());
       forwardHeadCmd(cmd.c_str());
       blePrintln("CDS threshold: " + cmd);
       break;
     case 'D':
+      rememberHeadCmd(cmd.c_str());
       forwardHeadCmd(cmd.c_str());
       blePrintln("Eye dim: " + cmd);
       break;

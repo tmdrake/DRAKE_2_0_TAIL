@@ -1,10 +1,13 @@
 /*
  * New_Modes.ino – Tail modes 3-10 (non-blocking)
  * solidR/G/B are globals (shared with BLE color/theme commands).
+ * suitPhase is the animation master clock (sent to Head via ESP-NOW).
  */
 
 static unsigned long modePrevMillis = 0;
-static uint16_t modeStep = 0;
+
+// Master phase for suit-wide visual sync (rainbow / comet / breathe / wave)
+uint16_t suitPhase = 0;
 
 // Defined in main so STAT / NVS / BLE can see them
 extern uint8_t solidR, solidG, solidB;
@@ -22,15 +25,23 @@ void setSolidColor(uint8_t r, uint8_t g, uint8_t b) {
   solidB = b;
 }
 
+/** Triangle 20..255..20 from phase (shared formula with Head). */
+static uint8_t breathFromPhase(uint16_t phase) {
+  uint16_t cycle = phase % 512;
+  if (cycle < 256)
+    return (uint8_t)map(cycle, 0, 255, 20, 255);
+  return (uint8_t)map(cycle, 256, 511, 255, 20);
+}
+
 void mode_rainbow_chase() {
   if (millis() - modePrevMillis < scaledInterval(40)) return;
   modePrevMillis = millis();
   for (int i = 0; i < spikes.numPixels(); i++) {
-    uint16_t pixelHue = modeStep + (i * 65536L / spikes.numPixels());
+    uint16_t pixelHue = suitPhase + (i * 65536L / spikes.numPixels());
     spikes.setPixelColor(i, spikes.gamma32(spikes.ColorHSV(pixelHue)));
   }
   spikes.show();
-  modeStep += 256;
+  suitPhase += 256;
 }
 
 void mode_comet() {
@@ -40,26 +51,23 @@ void mode_comet() {
     uint32_t c = spikes.getPixelColor(i);
     spikes.setPixelColor(i, ((c >> 16) & 0xFF) * 0.7, ((c >> 8) & 0xFF) * 0.7, (c & 0xFF) * 0.7);
   }
-  int head = modeStep % spikes.numPixels();
+  int head = suitPhase % spikes.numPixels();
   spikes.setPixelColor(head, 255, 255, 255);
   if (head > 0) spikes.setPixelColor(head - 1, 180, 100, 255);
   if (head > 1) spikes.setPixelColor(head - 2, 80, 0, 150);
   spikes.show();
-  modeStep++;
+  suitPhase++;
 }
 
 void mode_breathing() {
   if (millis() - modePrevMillis < scaledInterval(30)) return;
   modePrevMillis = millis();
-  static int breath = 0;
-  static int breathDir = 1;
-  breath += breathDir * 3;
-  if (breath >= 255) { breath = 255; breathDir = -1; }
-  if (breath <= 20)  { breath = 20;  breathDir = 1; }
-  uint32_t color = spikes.gamma32(spikes.ColorHSV(modeStep, 255, breath));
+  uint8_t breath = breathFromPhase(suitPhase);
+  uint16_t hue = (uint16_t)(suitPhase * 64);
+  uint32_t color = spikes.gamma32(spikes.ColorHSV(hue, 255, breath));
   for (int i = 0; i < spikes.numPixels(); i++) spikes.setPixelColor(i, color);
   spikes.show();
-  modeStep += 20;
+  suitPhase += 4;
 }
 
 void mode_fire() {
@@ -94,13 +102,13 @@ void mode_wave() {
   if (millis() - modePrevMillis < scaledInterval(35)) return;
   modePrevMillis = millis();
   for (int i = 0; i < spikes.numPixels(); i++) {
-    float phase = (float)(modeStep + i * 30) / 40.0f;
+    float phase = (float)(suitPhase + i * 30) / 40.0f;
     float wave = (sin(phase) + 1.0f) * 0.5f;
     uint8_t bri = (uint8_t)(wave * 220);
     spikes.setPixelColor(i, (bri * 150) / 255, 0, bri);
   }
   spikes.show();
-  modeStep++;
+  suitPhase++;
 }
 
 void mode_solid() {
@@ -120,5 +128,20 @@ void mode_off() {
 
 void resetModeState() {
   modePrevMillis = 0;
-  modeStep = 0;
+  suitPhase = 0;
+}
+
+/**
+ * Stream animation phase to Head ~25 Hz for modes that free-run on a clock.
+ * ~4 bytes/packet ≈ 100 B/s app data.
+ */
+void pushPhaseSync() {
+  static unsigned long lastPhaseSend = 0;
+  if (millis() - lastPhaseSend < 40) return;  // 25 Hz
+  lastPhaseSend = millis();
+
+  // Phase-driven: rainbow, comet, breathe, wave
+  if (mode != 3 && mode != 4 && mode != 5 && mode != 8) return;
+
+  espnowSendPhase(suitPhase, (uint8_t)constrain(mode, 0, 10));
 }

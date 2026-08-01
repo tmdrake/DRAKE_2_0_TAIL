@@ -110,14 +110,41 @@ void setup() {
   Serial.begin(115200);
   Serial.println("Drake Tail....GO! (C + T themes)");
 
+  // STA to Head SoftAP (fixed channel 2) so ESP-NOW home channel matches peer
   WiFi.mode(WIFI_STA);
   WiFi.setSleep(false);
-  WiFi.begin(ssid, NULL);
+  WiFi.setAutoReconnect(true);
+  WiFi.setTxPower(WIFI_POWER_19_5dBm);  // max practical TX for suit range
   WiFi.config(ip, gateway, subnet);
+  // Third arg = channel: prefer Head SoftAP on ch 2 (see ESPNOW.md)
+  WiFi.begin(ssid, NULL, 2);
   unsigned long t0 = millis();
   while (WiFi.status() != WL_CONNECTED && millis() - t0 < 5000) delay(100);
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.print("WiFi STA joined ");
+    Serial.print(ssid);
+    Serial.print(" ch=");
+    Serial.print(WiFi.channel());
+    Serial.print(" RSSI=");
+    Serial.print(WiFi.RSSI());
+    Serial.print(" BSSID=");
+    const uint8_t *b = WiFi.BSSID();
+    if (b) {
+      char bb[24];
+      sprintf(bb, "%02X:%02X:%02X:%02X:%02X:%02X", b[0], b[1], b[2], b[3], b[4], b[5]);
+      Serial.println(bb);
+    } else {
+      Serial.println("?");
+    }
+  } else {
+    Serial.println("WiFi STA: SoftAP not found — locking radio to ch2 for ESP-NOW");
+    WiFi.disconnect(false, false);
+    delay(50);
+  }
 
   setupEspNow();
+  // If SoftAP came up late, refresh peer from BSSID once more
+  if (WiFi.status() == WL_CONNECTED) refreshHeadPeerFromSoftAP();
 
   Serial.println("Restoring settings..");
   if (MODE.begin(EEPROM_SIZE)) {
@@ -185,7 +212,9 @@ void setup() {
 void loop() {
   t.update();
   if (!flashed) sound_detect();
-  pushLiveStatus();
+  pushLiveStatus();   // app STAT ~2 Hz while BLE connected
+  pushSuitSync();     // Head/PAWB settings heartbeat ~30 s (+ once after boot)
+  pushPhaseSync();    // Head anim phase ~25 Hz (rainbow/comet/breathe/wave)
 }
 
 void sound_detect() {
