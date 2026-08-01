@@ -223,11 +223,13 @@ void loop() {
 }
 
 void sound_detect() {
-  if (mode >= 3 && mode <= 10) {
+  // Modes 2–10 run continuously (VU needs live mic stream to Head every frame)
+  if (mode >= 2 && mode <= 10) {
     mode_selector(mode);
     digitalWrite(LED_BUILTIN, LOW);
     return;
   }
+  // Modes 0–1: sound-reactive when above gate; idle purple fade when quiet
   if (soundmode && enableSound) {
     mode_selector(mode);
     digitalWrite(LED_BUILTIN, HIGH);
