@@ -4,6 +4,8 @@
 
 Nice terminal UI over the **same commands as the phone app** (via USB serial).
 
+![Drake Tail TUI screenshot](../docs/tail_tui.svg)
+
 ### Setup
 
 ```bash
