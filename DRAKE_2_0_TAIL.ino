@@ -212,6 +212,7 @@ void setup() {
 void loop() {
   t.update();
   if (!flashed) sound_detect();
+  checkSerialBT();    // USB serial TUI / monitor (same cmds as BLE)
   pushLiveStatus();   // app STAT ~2 Hz while BLE connected
   pushSuitSync();     // Head/PAWB settings heartbeat ~30 s (+ once after boot)
   pushPhaseSync();    // Head anim phase ~25 Hz (rainbow/comet/breathe/wave)

@@ -412,4 +412,26 @@ void setupBLE() {
   Serial.println("NimBLE NUS advertising as TMDrake_tail");
 }
 
-void checkSerialBT() {}
+/**
+ * USB serial console uses the same command language as BLE NUS
+ * (for the Tail TUI / screen / Arduino Serial Monitor).
+ * Lines ending in \\n or \\r; max 64 chars.
+ */
+void checkSerialBT() {
+  static char line[72];
+  static uint8_t len = 0;
+  while (Serial.available() > 0) {
+    char c = (char)Serial.read();
+    if (c == '\r' || c == '\n') {
+      if (len > 0) {
+        line[len] = '\0';
+        processBLECommand(String(line));
+        len = 0;
+      }
+    } else if (len < sizeof(line) - 1) {
+      line[len++] = c;
+    } else {
+      len = 0;  // overflow — drop line
+    }
+  }
+}
