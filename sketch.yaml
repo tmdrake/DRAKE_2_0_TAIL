@@ -1,0 +1,12 @@
+# Arduino CLI defaults for Drake Tail (ESP32 Node32S)
+#
+# partitions.csv = max app (~3.875 MB factory app, no SPIFFS / no dual OTA)
+# Compile must pass upload.maximum_size matching app0 (0x3E0000 = 4063232):
+#   arduino-cli compile --fqbn esp32:esp32:node32s \
+#     --build-property upload.maximum_size=4063232 .
+default_fqbn: esp32:esp32:node32s
+profiles:
+  node32s-max-app:
+    fqbn: esp32:esp32:node32s
+    platforms:
+      - platform: esp32:esp32

@@ -17,8 +17,7 @@
  * Encryption: PMK + per-peer LMK (AES). Change keys if you want a private suit key.
  */
 
-#include <esp_now.h>
-#include <esp_wifi.h>
+// esp_now.h / esp_wifi.h included from DRAKE_2_0_TAIL.ino (Arduino prototype order)
 
 // ---- CHANGE THESE AFTER FIRST BOOT (see Serial) ----
 // Head MAC goes here (example format)
@@ -39,13 +38,17 @@ enum EspNowType : uint8_t {
 
 bool espnowReady = false;
 
-void onEspNowSent(const uint8_t *mac, esp_now_send_status_t status) {
+// ESP32 Arduino 3.x / IDF 5.x callback signatures
+void onEspNowSent(const esp_now_send_info_t *tx_info, esp_now_send_status_t status) {
+  (void)tx_info;
   // Optional debug:
   // Serial.println(status == ESP_NOW_SEND_SUCCESS ? "EN OK" : "EN FAIL");
+  (void)status;
 }
 
-void onEspNowRecv(const uint8_t *mac, const uint8_t *data, int len) {
-  if (len < 1) return;
+void onEspNowRecv(const esp_now_recv_info_t *info, const uint8_t *data, int len) {
+  (void)info;
+  if (len < 1 || data == nullptr) return;
   uint8_t type = data[0];
 
   if (type == EN_LIGHT && len >= 3) {

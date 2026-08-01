@@ -256,22 +256,32 @@ void processBLECommand(const String& raw) {
   }
 }
 
+// NimBLE-Arduino 2.x: callbacks take NimBLEConnInfo (old 1-arg forms never ran)
 class ServerCallbacks : public NimBLEServerCallbacks {
-  void onConnect(NimBLEServer* pServer) {
+  void onConnect(NimBLEServer* server, NimBLEConnInfo& connInfo) override {
+    (void)server;
+    (void)connInfo;
     deviceConnected = true;
     lastAppHbMs = millis();
     Serial.println("BLE client connected");
   }
-  void onDisconnect(NimBLEServer* pServer) {
+  void onDisconnect(NimBLEServer* server, NimBLEConnInfo& connInfo, int reason) override {
+    (void)server;
+    (void)connInfo;
+    (void)reason;
     deviceConnected = false;
+    Serial.println("BLE client disconnected — re-advertising");
     NimBLEDevice::startAdvertising();
   }
 };
 
 class RxCallbacks : public NimBLECharacteristicCallbacks {
-  void onWrite(NimBLECharacteristic* pCharacteristic) {
-    std::string value = pCharacteristic->getValue();
-    if (value.length() > 0) processBLECommand(String(value.c_str()));
+  void onWrite(NimBLECharacteristic* pCharacteristic, NimBLEConnInfo& connInfo) override {
+    (void)connInfo;
+    NimBLEAttValue value = pCharacteristic->getValue();
+    if (value.length() > 0) {
+      processBLECommand(String(value.c_str()));
+    }
   }
 };
 
@@ -286,12 +296,13 @@ void setupBLE() {
   pRx->setCallbacks(new RxCallbacks());
   pTxCharacteristic = pService->createCharacteristic(
       NUS_TX_UUID, NIMBLE_PROPERTY::NOTIFY | NIMBLE_PROPERTY::READ);
-  pService->start();
+  // NimBLE 2.x: services start with the GATT server when advertising begins
+  // (NimBLEService::start() is a no-op / deprecated)
   NimBLEAdvertising* adv = NimBLEDevice::getAdvertising();
   adv->setName("TMDrake_tail");
   adv->addServiceUUID(NUS_SERVICE_UUID);
   adv->enableScanResponse(true);
-  adv->start();
+  adv->start();  // also starts the GATT server + all services
   Serial.println("NimBLE NUS advertising as TMDrake_tail");
 }
 

@@ -1,0 +1,10 @@
+# Drake Tail – Node32S 4MB flash
+# Scheme: max app (almost all flash for firmware)
+# No OTA mirror, no SPIFFS — Tail uses NVS/EEPROM only for settings
+# App max: 0x3E0000 = 3.875 MB  (was 1.25 MB Default, 2.0 MB no_ota)
+#
+# Name,   Type, SubType, Offset,  Size, Flags
+nvs,      data, nvs,     0x9000,  0x5000,
+otadata,  data, ota,     0xe000,  0x2000,
+app0,     app,  factory, 0x10000, 0x3E0000,
+coredump, data, coredump,0x3F0000,0x10000,

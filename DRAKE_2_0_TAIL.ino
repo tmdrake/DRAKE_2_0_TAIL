@@ -7,6 +7,8 @@
 #endif
 
 #include <esp_task_wdt.h>
+#include <esp_now.h>
+#include <esp_wifi.h>
 #define WDT_TIMEOUT 30
 
 #define LED_PIN 22
@@ -157,7 +159,13 @@ void setup() {
   applyMasterBrightness();
   setupBLE();
 
-  esp_task_wdt_init(WDT_TIMEOUT * 1000, true);
+  // ESP32 Arduino 3.x: esp_task_wdt_init takes a config struct
+  esp_task_wdt_config_t wdt_config = {
+    .timeout_ms = (uint32_t)WDT_TIMEOUT * 1000U,
+    .idle_core_mask = 0,
+    .trigger_panic = true,
+  };
+  esp_task_wdt_reconfigure(&wdt_config);  // already init by core; reconfigure timeout
   enableLoopWDT();
 
   if (udp_head_light.listen(1235)) {
