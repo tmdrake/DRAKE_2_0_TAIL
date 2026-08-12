@@ -81,16 +81,16 @@ All active paths are **non-blocking** (`millis()` gates, no `delay()` on the hot
 
 Adafruit electret amp (AGC/normalizing), **DC bias ~1.25 V**, rail **0–3.3 V max**.
 
-**Hardware:** RC lowpass **is installed** on the suit (series R + C to GND at A0). **Exact R/C values are not in the repo yet** — measure on the bench and record in [MIC_HARDWARE.md](MIC_HARDWARE.md).
+**Hardware LPF (on-suit, recalled):** series **~10 kΩ** + **~0.1 µF (100 nF)** to GND at A0 → **fc ≈ 159 Hz**. Verify markings on the bench. Details: [MIC_HARDWARE.md](MIC_HARDWARE.md).
 
-**Software:** envelope tick **500 Hz** → Nyquist **250 Hz**; design budget keeps useful content **around / under ~200 Hz**. That figure is **sample-rate side**, not a labeled capacitor value.
+**Software:** envelope tick **500 Hz** → Nyquist **250 Hz**; design budget **~200 Hz** is sample-rate side, separate from the RC part values.
 
 ```text
 // 12-bit ADC, ADC_11db → 0..3.3 V full scale
 OFFSET = 1.25/3.3 * 4095 ≈ 1551
-tick   every 2 ms  (500 Hz)   // non-blocking; ≥2× ~200 Hz budget
+tick   every 2 ms  (500 Hz)   // non-blocking
 delta  = |analogRead(A0) - OFFSET|   // full-wave; deadband kills noise
-if delta < MIC_DEADBAND → 0          // true silence (no DC offset add)
+if delta < MIC_DEADBAND → 0
 level  = delta × (A%/100) × (S%/100)
 smooth = fast-attack/slow-release EMA → micLevelCached @ 50 Hz
 wake   = smooth > micGate            // modes 0–1
@@ -103,10 +103,10 @@ wake   = smooth > micGate            // modes 0–1
 | Gain % | `A` | 100 | yes |
 | Sound enable | `E`/`e` | on | yes |
 
-Stream to Head @ **~200 Hz** (`MIC_STREAM_MS=5`, ADC 1 kHz): ESP-NOW type `0x01` (int16 excess).  
+Stream to Head @ **~200 Hz** (`MIC_STREAM_MS=5`): ESP-NOW type `0x01` (int16 excess).  
 
-**ASK mic pulse (M0/M1/M2 only):** `m####` at most ~25 Hz, only on real hits / release — no `waitPacketSent`.  
-Modes **3–10**: ASK carries **M# / C / R0 / L** only (no mic stream).
+**ASK mic pulse (M0/M1/M2 only):** `m####` at most ~25 Hz on real hits / release.  
+Modes **3–10**: ASK carries **M# / C / R0 / L** only.
 
 **Shared scale** (`micNorm01()` / `micNormPct()`):
 
@@ -172,10 +172,10 @@ Full contract: [APP_INTERFACE.md](APP_INTERFACE.md) · [SETTINGS.md](SETTINGS.md
 - Mic gain/gate/EMA on Tail
 - Fan + CDS app settings on Head
 - BLE STAT telemetry
-- Mic path documented; hardware RC topology + software Nyquist notes ([MIC_HARDWARE.md](MIC_HARDWARE.md))
+- Mic RC documented: **~10 kΩ + 0.1 µF** ([MIC_HARDWARE.md](MIC_HARDWARE.md))
 
 ### Backlog (ideas, not blocking ship)
-- **Record actual on-suit R/C values** when hardware is on the bench
+- Meter-confirm R/C markings when hardware is open
 - Auto-calibrate mic OFFSET / “silence” button
 - Drop UDP fallback once ESP-NOW proven on-suit
 - Delete or archive Head `Other_modes.ino` blocking demos
