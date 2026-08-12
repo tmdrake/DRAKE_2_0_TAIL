@@ -81,14 +81,14 @@ All active paths are **non-blocking** (`millis()` gates, no `delay()` on the hot
 
 Adafruit electret amp (AGC/normalizing), **DC bias ~1.25 V**, rail **0–3.3 V max**.
 
-**Hardware LPF:** series **R + C to GND** at A0, design cutoff **~200 Hz**.  
-**Default parts: 8.2 kΩ + 100 nF → fc ≈ 194 Hz.**  
-Full schematic, BOM, alternates, bench notes: **[MIC_HARDWARE.md](MIC_HARDWARE.md)**.
+**Hardware:** RC lowpass **is installed** on the suit (series R + C to GND at A0). **Exact R/C values are not in the repo yet** — measure on the bench and record in [MIC_HARDWARE.md](MIC_HARDWARE.md).
+
+**Software:** envelope tick **500 Hz** → Nyquist **250 Hz**; design budget keeps useful content **around / under ~200 Hz**. That figure is **sample-rate side**, not a labeled capacitor value.
 
 ```text
 // 12-bit ADC, ADC_11db → 0..3.3 V full scale
 OFFSET = 1.25/3.3 * 4095 ≈ 1551
-tick   every 2 ms  (500 Hz)   // non-blocking; ≥2× ~200 Hz
+tick   every 2 ms  (500 Hz)   // non-blocking; ≥2× ~200 Hz budget
 delta  = |analogRead(A0) - OFFSET|   // full-wave; deadband kills noise
 if delta < MIC_DEADBAND → 0          // true silence (no DC offset add)
 level  = delta × (A%/100) × (S%/100)
@@ -172,9 +172,10 @@ Full contract: [APP_INTERFACE.md](APP_INTERFACE.md) · [SETTINGS.md](SETTINGS.md
 - Mic gain/gate/EMA on Tail
 - Fan + CDS app settings on Head
 - BLE STAT telemetry
-- Mic analog LPF documented ([MIC_HARDWARE.md](MIC_HARDWARE.md)) — **fc ≈ 200 Hz**
+- Mic path documented; hardware RC topology + software Nyquist notes ([MIC_HARDWARE.md](MIC_HARDWARE.md))
 
 ### Backlog (ideas, not blocking ship)
+- **Record actual on-suit R/C values** when hardware is on the bench
 - Auto-calibrate mic OFFSET / “silence” button
 - Drop UDP fallback once ESP-NOW proven on-suit
 - Delete or archive Head `Other_modes.ino` blocking demos
