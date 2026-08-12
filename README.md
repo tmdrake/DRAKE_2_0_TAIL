@@ -15,6 +15,8 @@ ESP32 (Node32S) firmware for the **dragonsuit tail** — system hub.
 Noise-floor track → **excess** → `micNorm01()` (quiet ≈ empty bar / inject).  
 Gate **G** wakes M0/M1; VU always paints from excess.
 
+**Hardware LPF** at A0: default **10 kΩ + 100 nF (~159 Hz)** — [MIC_HARDWARE.md](MIC_HARDWARE.md).
+
 ## Tail settings TUI (Mac / Linux)
 
 ![Drake Tail TUI](docs/tail_tui.svg)
@@ -34,6 +36,7 @@ Full keys & notes: **[tools/README.md](tools/README.md)**
 | Doc | Contents |
 |-----|----------|
 | **[SYSTEM.md](SYSTEM.md)** | Full architecture |
+| **[MIC_HARDWARE.md](MIC_HARDWARE.md)** | Mic amp + **RC lowpass** (schematic, BOM, fc) |
 | **[ESPNOW.md](ESPNOW.md)** | ESP-NOW MACs, packets, gotchas (SoftAP MAC, encrypt) |
 | **[APP_INTERFACE.md](APP_INTERFACE.md)** | Phone app contract |
 | **[APP_TEAM.md](APP_TEAM.md)** | App requirements (HB, link service) |
