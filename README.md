@@ -15,7 +15,7 @@ ESP32 (Node32S) firmware for the **dragonsuit tail** — system hub.
 Noise-floor track → **excess** → `micNorm01()` (quiet ≈ empty bar / inject).  
 Gate **G** wakes M0/M1; VU always paints from excess.
 
-**Hardware RC LPF** is on the suit (values **TBD** until measured). Software sample budget ~**200 Hz** (500 Hz tick). See [MIC_HARDWARE.md](MIC_HARDWARE.md).
+**Hardware RC LPF (recalled):** **~10 kΩ + ~0.1 µF** → **fc ≈ 159 Hz**. Software sample budget ~200 Hz (500 Hz tick). [MIC_HARDWARE.md](MIC_HARDWARE.md).
 
 ## Tail settings TUI (Mac / Linux)
 
@@ -36,18 +36,17 @@ Full keys & notes: **[tools/README.md](tools/README.md)**
 | Doc | Contents |
 |-----|----------|
 | **[SYSTEM.md](SYSTEM.md)** | Full architecture |
-| **[MIC_HARDWARE.md](MIC_HARDWARE.md)** | Mic amp + RC LPF (topology; on-suit R/C TBD) |
-| **[ESPNOW.md](ESPNOW.md)** | ESP-NOW MACs, packets, gotchas (SoftAP MAC, encrypt) |
+| **[MIC_HARDWARE.md](MIC_HARDWARE.md)** | Mic amp + RC LPF (**~10k + 0.1 µF**) |
+| **[ESPNOW.md](ESPNOW.md)** | ESP-NOW MACs, packets, gotchas |
 | **[APP_INTERFACE.md](APP_INTERFACE.md)** | Phone app contract |
 | **[APP_TEAM.md](APP_TEAM.md)** | App requirements (HB, link service) |
-| **[REPO.md](REPO.md)** | What belongs in git (text, libs, assets) + agent upload limits |
+| **[REPO.md](REPO.md)** | Git contents + agent upload limits |
 | **[IMPROVEMENTS.md](IMPROVEMENTS.md)** | Roadmap |
 | **[tools/README.md](tools/README.md)** | Tail TUI |
 
 ## Repo contents
 
-Mostly `.ino` + markdown today. **Libraries and binary assets required for build or docs are allowed** — see **[REPO.md](REPO.md)**.  
-Note: some automation tools can only push text; use local `git` or GitHub Upload for PNG/PDF/etc.
+Mostly `.ino` + markdown. Libraries/assets for build/docs allowed — **[REPO.md](REPO.md)**.
 
 ## ESP-NOW quick start
 1. Flash Tail + Head, read MACs from Serial.  
