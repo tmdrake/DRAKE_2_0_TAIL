@@ -2,7 +2,7 @@
 
 **Last updated:** August 2026  
 **Audience:** Firmware team + app team  
-Related: [ESPNOW.md](ESPNOW.md) · [APP_INTERFACE.md](APP_INTERFACE.md) · [SETTINGS.md](SETTINGS.md)
+Related: [ESPNOW.md](ESPNOW.md) · [APP_INTERFACE.md](APP_INTERFACE.md) · [SETTINGS.md](SETTINGS.md) · [MIC_HARDWARE.md](MIC_HARDWARE.md)
 
 ---
 
@@ -79,7 +79,11 @@ All active paths are **non-blocking** (`millis()` gates, no `delay()` on the hot
 
 ## 3. Mic path (Tail)
 
-Adafruit electret amp (AGC/normalizing), **DC bias 1.25 V**, rail **0–3.3 V max**, hardware LPF for **≤ ~200 Hz**.
+Adafruit electret amp (AGC/normalizing), **DC bias ~1.25 V**, rail **0–3.3 V max**.
+
+**Hardware LPF:** series **R + C to GND** at A0, target **fc ≤ ~200 Hz**.  
+**Default parts: 10 kΩ + 100 nF → fc ≈ 159 Hz.**  
+Full schematic, BOM, alternates, bench notes: **[MIC_HARDWARE.md](MIC_HARDWARE.md)**.
 
 ```text
 // 12-bit ADC, ADC_11db → 0..3.3 V full scale
@@ -168,9 +172,9 @@ Full contract: [APP_INTERFACE.md](APP_INTERFACE.md) · [SETTINGS.md](SETTINGS.md
 - Mic gain/gate/EMA on Tail
 - Fan + CDS app settings on Head
 - BLE STAT telemetry
+- Mic analog LPF documented ([MIC_HARDWARE.md](MIC_HARDWARE.md))
 
 ### Backlog (ideas, not blocking ship)
-- Color command `C<r>,<g>,<b>` for Solid mode sync
 - Auto-calibrate mic OFFSET / “silence” button
 - Drop UDP fallback once ESP-NOW proven on-suit
 - Delete or archive Head `Other_modes.ino` blocking demos
